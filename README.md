@@ -4,6 +4,8 @@
 > PDF). See **[SATORU.md](SATORU.md)** for what changed, how to build it,
 > and the companion config repo you also need.
 > Upstream: https://github.com/medic/cht-core
+>
+> **AI agents / automation: read [AGENTS.md](AGENTS.md) first.**
 
 # The Core Framework of the Community Health Toolkit (CHT)
 
