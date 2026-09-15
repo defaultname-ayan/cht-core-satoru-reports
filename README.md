@@ -5,6 +5,7 @@
 > and the companion config repo you also need.
 > Upstream: https://github.com/medic/cht-core
 >
+> **Setting it up or something not working? → [RUNBOOK.md](RUNBOOK.md)**
 > **AI agents / automation: read [AGENTS.md](AGENTS.md) first.**
 
 # The Core Framework of the Community Health Toolkit (CHT)
