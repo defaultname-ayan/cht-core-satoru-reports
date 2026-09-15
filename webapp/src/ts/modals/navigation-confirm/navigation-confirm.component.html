@@ -1,0 +1,10 @@
+<mm-modal-layout
+  id="navigation-confirm-modal"
+  [titleKey]="messageTranslationKey ? 'Confirm' : 'confirm.destructive.navigation.title'"
+  [submitKey]="'confirm.destructive.navigation.submit'"
+  [cancelKey]="'Cancel'"
+  (onCancel)="close(false)"
+  (onSubmit)="close(true)"
+>
+  <p>{{ (messageTranslationKey || 'confirm.destructive.navigation.forms') | translate }}</p>
+</mm-modal-layout>

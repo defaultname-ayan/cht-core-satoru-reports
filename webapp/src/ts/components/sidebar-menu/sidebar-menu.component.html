@@ -1,0 +1,87 @@
+<mat-sidenav-container [hasBackdrop]="true">
+  <mat-sidenav #sidebar mode="over" [fixedInViewport]="true">
+    <mm-panel-header headerTitle="sidebar_menu.title" (onClose)="close()"/>
+
+    <mat-sidenav-content>
+
+      <div class="nav-section">
+        <a class="nav-item"
+          [attr.href]="adminAppPath"
+          mmAuth
+          [mmAuthAny]="[ 'can_configure', 'can_view_outgoing_messages', 'can_export_all' ]"
+          [mmAuthOnline]="true">
+          <mat-icon fontIcon="fa-cog"></mat-icon>
+          <span>{{ 'admin.app.name' | translate }}</span>
+        </a>
+
+        <a class="nav-item column storage-info"
+          mmAuth 
+          [mmAuthOnline]="false" 
+          [class.disabled]="true">
+          <mat-icon fontIcon="fa-hdd-o" class="progress-bar-icon"></mat-icon>
+          <div id="content">
+            <strong>{{'Storage Info' | translate}}</strong>
+            <div class="progress-bar-container">
+              <div
+                id="storage-pressure-progress-bar"
+                class="progress-bar"
+                [ngClass]="storagePressureClass"
+                [style.width.%]="storageUsagePercentage"
+                [title]="'Used: ' + storageUsagePercentage.toFixed(2) + '%'"
+                [attr.aria-label]="('storage.used' | translate) + ': ' + storageUsagePercentage.toFixed(2) + '%'">
+              </div>
+            </div>
+            <span>{{ 'storage.available.space' | translate }}: {{availableStorageSpace}}</span>
+          </div>
+        </a>
+      </div>
+
+      <div class="nav-section">
+        <a *ngIf="!replicationStatus?.disabled"
+          class="nav-item"
+          [class.disabled]="replicationStatus?.current?.disableSyncButton"
+          (click)="replicate()">
+          <mat-icon fontIcon="fa-refresh"></mat-icon>
+          <span>{{ 'sync.now' | translate }}</span>
+        </a>
+      </div>
+
+      <div class="nav-section" *ngIf="!replicationStatus?.disabled && (replicationStatus?.lastSuccessTo || replicationStatus?.current)">
+        <div class="nav-item" [class]="replicationStatus?.current?.className">
+          <mat-icon [fontIcon]="replicationStatus?.current?.icon" *ngIf="replicationStatus?.current"></mat-icon>
+          <div class="sync-summary">
+            <span *ngIf="replicationStatus?.current">{{ replicationStatus?.current.key | translate }}</span>
+
+            <div *ngIf="replicationStatus?.lastSuccessTo" class="last-sync">
+              <span>{{ 'sync.last_success' | translate }}</span>
+              <!-- The tabindex=0 prevents showing the tooltip when menu opens in mobile devices -->
+              <span [innerHTML]="replicationStatus?.lastSuccessTo | relativeDate" tabindex="0"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <ng-container *ngFor="let tab of headerTabsForSidebar">
+          <a class="nav-item"
+             *ngIf="tab.name !== 'privacy-policy' || showPrivacyPolicy"
+             [routerLink]="tab.route"
+             (click)="onTabClick(tab)">
+              <span class="nav-icon" *ngIf="tab.resourceIcon" [innerHTML]="tab.resourceIcon | resourceIcon"></span>
+              <mat-icon *ngIf="!tab.resourceIcon" [fontIcon]="tab.icon || tab.defaultIcon"></mat-icon>
+              <span>{{ tab.translation | translate }}</span>
+          </a>
+        </ng-container>
+      </div>
+
+      <div class="nav-section">
+        <a *ngIf="canLogOut" class="nav-item" (click)="logout()">
+          <mat-icon fontIcon="fa-power-off"></mat-icon>
+          <span>{{ 'Log Out' | translate }}</span>
+        </a>
+      </div>
+
+    </mat-sidenav-content>
+
+  </mat-sidenav>
+</mat-sidenav-container>

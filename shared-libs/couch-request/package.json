@@ -1,0 +1,14 @@
+{
+  "name": "@medic/couch-request",
+  "version": "1.0.0",
+  "description": "Provides a declarative global options interface for http requests",
+  "main": "src/couch-request.js",
+  "scripts": {
+    "test": "nyc --nycrcPath='../nyc.config.js' mocha ./test"
+  },
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@medic/environment": "file:../environment"
+  }
+}

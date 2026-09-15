@@ -1,0 +1,1107 @@
+import * as LocalDataContext from '../../src/local/libs/data-context';
+import sinon, { SinonStub } from 'sinon';
+import logger from '@medic/logger';
+import { Doc } from '../../src/libs/doc';
+import * as LocalDoc from '../../src/local/libs/doc';
+import * as Nouveau from '../../src/local/libs/nouveau';
+import * as Report from '../../src/local/report';
+import * as Qualifier from '../../src/qualifier';
+import { expect } from 'chai';
+import { END_OF_ALPHABET_MARKER } from '../../src/libs/constants';
+import * as Lineage from '../../src/local/libs/lineage';
+import * as LocalCore from '../../src/local/libs/core';
+import * as LocalContact from '../../src/local/contact';
+import { InvalidArgumentError, ResourceNotFoundError } from '../../src';
+import { DOC_TYPES } from '@medic/constants';
+
+describe('local report', () => {
+  let localContext: LocalDataContext.LocalDataContext;
+  let settingsGetAll: SinonStub;
+  let warn: SinonStub;
+
+  beforeEach(() => {
+    settingsGetAll = sinon.stub();
+    localContext = {
+      medicDb: {} as PouchDB.Database<Doc>,
+      settings: { getAll: settingsGetAll }
+    } as unknown as LocalDataContext.LocalDataContext;
+    warn = sinon.stub(logger, 'warn');
+  });
+
+  afterEach(() => sinon.restore());
+
+  describe('v1', () => {
+    const settings = { hello: 'world' } as const;
+
+    describe('get', () => {
+      const identifier = { uuid: 'uuid' } as const;
+      let getDocByIdOuter: SinonStub;
+      let getDocByIdInner: SinonStub;
+
+      beforeEach(() => {
+        getDocByIdInner = sinon.stub();
+        getDocByIdOuter = sinon.stub(LocalDoc, 'getDocById').returns(getDocByIdInner);
+      });
+
+      it('returns a report by UUID', async () => {
+        const doc = { type: DOC_TYPES.DATA_RECORD, form: 'yes', _id: 'uuid', _rev: '1' };
+        getDocByIdInner.resolves(doc);
+        settingsGetAll.returns(settings);
+
+        const result = await Report.v1.get(localContext)(identifier);
+
+        expect(result).to.equal(doc);
+        expect(getDocByIdOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocByIdInner.calledOnceWithExactly(identifier.uuid)).to.be.true;
+        expect(warn.notCalled).to.be.true;
+      });
+
+      it('returns null if the identified doc does not have a record type', async () => {
+        const doc = { type: 'not-data-record', _id: '_id' };
+        getDocByIdInner.resolves(doc);
+        settingsGetAll.returns(settings);
+
+        const result = await Report.v1.get(localContext)(identifier);
+
+        expect(result).to.be.null;
+        expect(getDocByIdOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocByIdInner.calledOnceWithExactly(identifier.uuid)).to.be.true;
+        expect(warn.calledOnceWithExactly(`Document [${identifier.uuid}] is not a valid report.`)).to.be.true;
+      });
+
+      it('returns null if the identified doc does not have a form field', async () => {
+        const doc = { type: DOC_TYPES.DATA_RECORD, _id: '_id' };
+        getDocByIdInner.resolves(doc);
+        settingsGetAll.returns(settings);
+
+        const result = await Report.v1.get(localContext)(identifier);
+
+        expect(result).to.be.null;
+        expect(getDocByIdOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocByIdInner.calledOnceWithExactly(identifier.uuid)).to.be.true;
+        expect(warn.calledOnceWithExactly(`Document [${identifier.uuid}] is not a valid report.`)).to.be.true;
+      });
+
+      it('returns null if the identified doc is not found', async () => {
+        getDocByIdInner.resolves(null);
+
+        const result = await Report.v1.get(localContext)(identifier);
+
+        expect(result).to.be.null;
+        expect(getDocByIdOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocByIdInner.calledOnceWithExactly(identifier.uuid)).to.be.true;
+        expect(warn.calledOnceWithExactly(`Document [${identifier.uuid}] is not a valid report.`)).to.be.true;
+      });
+
+      it('propagates error if getMedicDocById throws an error', async () => {
+        const err = new Error('error');
+        getDocByIdInner.throws(err);
+
+        await expect(Report.v1.get(localContext)(identifier)).to.be.rejectedWith('error');
+
+        expect(getDocByIdOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocByIdInner.calledOnceWithExactly(identifier.uuid)).to.be.true;
+        expect(settingsGetAll.notCalled).to.be.true;
+        expect(warn.notCalled).to.be.true;
+      });
+    });
+
+    describe('getSummaries', () => {
+      let getDocsByIdsOuter: SinonStub;
+      let getDocsByIdsInner: SinonStub;
+
+      beforeEach(() => {
+        getDocsByIdsInner = sinon.stub();
+        getDocsByIdsOuter = sinon.stub(LocalDoc, 'getDocsByIds').returns(getDocsByIdsInner);
+      });
+
+      it('passes empty ids through to getDocsByIds', async () => {
+        getDocsByIdsInner.resolves([]);
+
+        const result = await Report.v1.getSummaries(localContext)({ ids: [] });
+
+        expect(result).to.deep.equal([]);
+        expect(getDocsByIdsOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocsByIdsInner.calledOnceWithExactly([])).to.be.true;
+      });
+
+      it('summarises reports and filters out non-report docs', async () => {
+        const reportDoc = {
+          _id: 'a',
+          _rev: '1',
+          type: DOC_TYPES.DATA_RECORD,
+          form: 'delivery',
+          from: '+123',
+          reported_date: 100,
+          fields: { patient_id: 'f', patient_name: 'jeff' },
+        };
+        const contactDoc = { _id: 'b', _rev: '2', type: 'person', name: 'james' };
+        getDocsByIdsInner.resolves([reportDoc, contactDoc, null]);
+
+        const result = await Report.v1.getSummaries(localContext)({ ids: ['a', 'b', 'missing'] });
+
+        expect(result).to.deep.equal([{
+          _id: 'a',
+          _rev: '1',
+          from: '+123',
+          phone: undefined,
+          form: 'delivery',
+          read: undefined,
+          valid: true,
+          verified: undefined,
+          reported_date: 100,
+          contact: undefined,
+          lineage: [],
+          subject: { name: 'jeff', value: 'f', type: 'reference' },
+          case_id: undefined,
+        }]);
+        expect(getDocsByIdsOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocsByIdsInner.calledOnceWithExactly(['a', 'b', 'missing'])).to.be.true;
+      });
+    });
+
+    describe('getWithLineage', () => {
+      const identifier = { uuid: 'uuid' } as const;
+      let fetchHydratedDocOuter: SinonStub;
+      let fetchHydratedDocInner: SinonStub;
+
+      beforeEach(() => {
+        fetchHydratedDocInner = sinon.stub();
+        fetchHydratedDocOuter = sinon.stub(Lineage, 'fetchHydratedDoc').returns(fetchHydratedDocInner);
+      });
+
+      it('returns a report with contact lineage when found', async () => {
+        const report = {
+          type: DOC_TYPES.DATA_RECORD,
+          form: 'yes',
+          _id: 'report_id',
+          _rev: '1',
+          contact: { _id: 'contact_id' }
+        };
+        fetchHydratedDocInner.resolves(report);
+
+        const result = await Report.v1.getWithLineage(localContext)(identifier);
+
+        expect(result).to.deep.equal(report);
+        expect(fetchHydratedDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(fetchHydratedDocInner.calledOnceWithExactly(identifier.uuid)).to.be.true;
+      });
+
+      it('returns null if document is not a report', async () => {
+        const report = { type: 'not_a_report', _id: 'doc_id' };
+        fetchHydratedDocInner.resolves(report);
+
+        const result = await Report.v1.getWithLineage(localContext)(identifier);
+
+        expect(result).to.be.null;
+        expect(fetchHydratedDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(fetchHydratedDocInner.calledOnceWithExactly(identifier.uuid)).to.be.true;
+      });
+
+      it('returns null if document is not found', async () => {
+        fetchHydratedDocInner.resolves(null);
+
+        const result = await Report.v1.getWithLineage(localContext)(identifier);
+
+        expect(result).to.be.null;
+        expect(fetchHydratedDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(fetchHydratedDocInner.calledOnceWithExactly(identifier.uuid)).to.be.true;
+      });
+    });
+
+    describe('getUuidsPage', () => {
+      const limit = 3;
+      const expectedResult = { cursor: 'bookmark', data: ['1', '2', '3'] };
+      let queryViewFreetextByKey: SinonStub;
+      let queryViewFreetextByRange: SinonStub;
+      let queryViewByForms: SinonStub;
+      let fetchAndFilterIdsInner: SinonStub;
+      let fetchAndFilterIdsOuter: SinonStub;
+      let queryNouveauFreetext: SinonStub;
+      let useNouveauIndexes: SinonStub;
+
+      beforeEach(() => {
+        queryViewFreetextByKey = sinon.stub();
+        queryViewByForms = sinon.stub();
+        const queryDocIdsByKey = sinon.stub(LocalDoc, 'queryDocIdsByKey');
+        queryDocIdsByKey
+          .withArgs(localContext.medicDb, 'medic-offline-freetext/reports_by_freetext')
+          .returns(queryViewFreetextByKey);
+        sinon
+          .stub(LocalDoc, 'queryDocIdsByKeys')
+          .withArgs(localContext.medicDb, 'medic-client/reports_by_form')
+          .returns(queryViewByForms);
+
+        queryViewFreetextByRange = sinon.stub();
+        sinon
+          .stub(LocalDoc, 'queryDocIdsByRange')
+          .withArgs(localContext.medicDb, 'medic-offline-freetext/reports_by_freetext')
+          .returns(queryViewFreetextByRange);
+
+        fetchAndFilterIdsInner = sinon.stub();
+        fetchAndFilterIdsOuter = sinon
+          .stub(LocalDoc, 'fetchAndFilterIds')
+          .returns(fetchAndFilterIdsInner);
+
+        queryNouveauFreetext = sinon.stub();
+        sinon
+          .stub(Nouveau, 'queryByFreetext')
+          .withArgs(localContext.medicDb, 'reports_by_freetext')
+          .returns(queryNouveauFreetext);
+
+        useNouveauIndexes = sinon.stub(Nouveau, 'useNouveauIndexes');
+      });
+
+      describe('when useNouveauIndexes is true', () => {
+        beforeEach(() => {
+          queryNouveauFreetext.resolves(expectedResult);
+          useNouveauIndexes.resolves(true);
+        });
+
+        ([
+          ['searching with a keyed value and no cursor', null, 'key:value'],
+          ['searching with a keyed value and a cursor', 'cursor', 'key:value'],
+          ['searching with a prefix qualifier and no cursor', null, 'searchterm'],
+          ['searching with a prefix qualifier and no cursor', 'cursor', 'searchterm']
+        ] as [string, string | null, string][]).forEach(([test, cursor, freetext]) => {
+          it(`uses nouveau for freetext searches when ${test}`, async () => {
+            const qualifier = Qualifier.byFreetext(freetext);
+
+            const res = await Report.v1.getUuidsPage(localContext)(qualifier, cursor, limit);
+
+            expect(res).to.deep.equal(expectedResult);
+            expect(useNouveauIndexes.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+            expect(queryNouveauFreetext.calledOnceWithExactly(qualifier, cursor, limit)).to.be.true;
+            expect(queryViewFreetextByKey.notCalled).to.be.true;
+            expect(queryViewFreetextByRange.notCalled).to.be.true;
+            expect(fetchAndFilterIdsOuter.notCalled).to.be.true;
+            expect(fetchAndFilterIdsInner.notCalled).to.be.true;
+          });
+        });
+
+        it('normalizes freetext qualifier before querying nouveau', async () => {
+          const freetext = '  HAS:DELIMITER  ';
+          const qualifier = Qualifier.byFreetext(freetext);
+
+          const res = await Report.v1.getUuidsPage(localContext)(qualifier, null, limit);
+
+          expect(res).to.deep.equal(expectedResult);
+          expect(useNouveauIndexes.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+          expect(queryNouveauFreetext.calledOnceWithExactly(
+            Qualifier.byFreetext('has:delimiter'),
+            null,
+            limit
+          )).to.be.true;
+          expect(queryViewFreetextByKey.notCalled).to.be.true;
+          expect(queryViewFreetextByRange.notCalled).to.be.true;
+          expect(fetchAndFilterIdsOuter.notCalled).to.be.true;
+          expect(fetchAndFilterIdsInner.notCalled).to.be.true;
+        });
+      });
+
+      describe('when useNouveauIndexes is false', () => {
+        beforeEach(() => {
+          useNouveauIndexes.resolves(false);
+          fetchAndFilterIdsInner.resolves(expectedResult);
+        });
+
+        ([
+          [null, 0],
+          ['1', 1]
+        ] as [string | null, number][]).forEach(([cursor, skip]) => {
+          it('uses offline views for freetext keyed qualifier', async () => {
+            const freetext = 'key:value';
+            const qualifier = Qualifier.byFreetext(freetext);
+
+            const res = await Report.v1.getUuidsPage(localContext)(qualifier, cursor, limit);
+
+            expect(res).to.deep.equal(expectedResult);
+            expect(useNouveauIndexes.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+            expect(queryNouveauFreetext.notCalled).to.be.true;
+            expect(queryViewFreetextByRange.notCalled).to.be.true;
+            expect(fetchAndFilterIdsOuter.calledOnce).to.be.true;
+            expect(fetchAndFilterIdsOuter.args[0][1]).to.equal(limit);
+            expect(fetchAndFilterIdsInner.calledOnceWithExactly(limit, skip)).to.be.true;
+
+            // Verify the page function uses the keyed freetext view
+            const pageFn = fetchAndFilterIdsOuter.firstCall.args[0] as (l: number, s: number) => unknown;
+            pageFn(limit, skip);
+
+            expect(queryViewFreetextByKey.calledWithExactly([freetext], limit, skip)).to.be.true;
+          });
+
+          it('uses offline views for freetext prefix qualifier', async () => {
+            const freetext = 'searchterm';
+            const qualifier = Qualifier.byFreetext(freetext);
+
+            const res = await Report.v1.getUuidsPage(localContext)(qualifier, cursor, limit);
+
+            expect(res).to.deep.equal(expectedResult);
+            expect(useNouveauIndexes.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+            expect(queryNouveauFreetext.notCalled).to.be.true;
+            expect(queryViewFreetextByKey.notCalled).to.be.true;
+            expect(fetchAndFilterIdsOuter.calledOnce).to.be.true;
+            expect(fetchAndFilterIdsOuter.args[0][1]).to.equal(limit);
+            expect(fetchAndFilterIdsInner.calledOnceWithExactly(limit, skip)).to.be.true;
+
+            // Verify the page function uses the range freetext view
+            const pageFn = fetchAndFilterIdsOuter.firstCall.args[0] as (l: number, s: number) => unknown;
+            pageFn(limit, skip);
+
+            expect(queryViewFreetextByRange.calledWithExactly(
+              [freetext],
+              [freetext + END_OF_ALPHABET_MARKER],
+              limit,
+              skip
+            )).to.be.true;
+          });
+        });
+
+        it('normalizes freetext qualifier before querying', async () => {
+          const freetext = '  HAS:DELIMITER  ';
+          const qualifier = Qualifier.byFreetext(freetext);
+
+          const res = await Report.v1.getUuidsPage(localContext)(qualifier, null, limit);
+
+          expect(res).to.deep.equal(expectedResult);
+          expect(useNouveauIndexes.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+          expect(queryNouveauFreetext.notCalled).to.be.true;
+          expect(queryViewFreetextByRange.notCalled).to.be.true;
+          expect(fetchAndFilterIdsOuter.calledOnce).to.be.true;
+          expect(fetchAndFilterIdsOuter.args[0][1]).to.equal(limit);
+          expect(fetchAndFilterIdsInner.calledOnceWithExactly(limit, 0)).to.be.true;
+
+          // Verify the page function uses the keyed freetext view
+          const pageFn = fetchAndFilterIdsOuter.firstCall.args[0] as (l: number, s: number) => unknown;
+          pageFn(limit, 0);
+
+          expect(queryViewFreetextByKey.calledWithExactly(['has:delimiter'], limit, 0)).to.be.true;
+        });
+
+        it(`throws an error if cursor is invalid`, async () => {
+          const qualifier = Qualifier.byFreetext('nice:report');
+          const cursor = 'not a number';
+
+          await expect(Report.v1.getUuidsPage(localContext)(qualifier, cursor, limit))
+            .to.be.rejectedWith(
+              InvalidArgumentError,
+              `The cursor must be a string or null for first page: [${JSON.stringify(cursor)}]`
+            );
+
+          expect(useNouveauIndexes.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+          expect(queryNouveauFreetext.notCalled).to.be.true;
+          expect(queryViewFreetextByKey.notCalled).to.be.true;
+          expect(queryViewFreetextByRange.notCalled).to.be.true;
+          expect(fetchAndFilterIdsOuter.notCalled).to.be.true;
+          expect(fetchAndFilterIdsInner.notCalled).to.be.true;
+        });
+      });
+
+      describe('when qualifying by form', () => {
+        beforeEach(() => {
+          fetchAndFilterIdsInner.resolves(expectedResult);
+          // The form branch must not depend on the nouveau/offline split at all.
+          useNouveauIndexes.resolves(true);
+        });
+
+        ([
+          [null, 0],
+          ['1', 1]
+        ] as [string | null, number][]).forEach(([cursor, skip]) => {
+          it(`queries the reports_by_form view with cursor ${JSON.stringify(cursor)}`, async () => {
+            const qualifier = Qualifier.byForms(['pregnancy']);
+
+            const res = await Report.v1.getUuidsPage(localContext)(qualifier, cursor, limit);
+
+            expect(res).to.deep.equal(expectedResult);
+            expect(fetchAndFilterIdsOuter.calledOnce).to.be.true;
+            expect(fetchAndFilterIdsOuter.args[0][1]).to.equal(limit);
+            expect(fetchAndFilterIdsInner.calledOnceWithExactly(limit, skip)).to.be.true;
+
+            // Verify the page function uses the form view, keyed on the form code
+            const pageFn = fetchAndFilterIdsOuter.firstCall.args[0] as (l: number, s: number) => unknown;
+            pageFn(limit, skip);
+
+            expect(queryViewByForms.calledOnceWithExactly([['pregnancy']], limit, skip)).to.be.true;
+
+            // The freetext machinery must be untouched
+            expect(queryNouveauFreetext.notCalled).to.be.true;
+            expect(queryViewFreetextByKey.notCalled).to.be.true;
+            expect(queryViewFreetextByRange.notCalled).to.be.true;
+          });
+        });
+
+        it('does not normalize the form code', async () => {
+          const qualifier = Qualifier.byForms(['ANC_FollowUp']);
+
+          await Report.v1.getUuidsPage(localContext)(qualifier, null, limit);
+
+          const pageFn = fetchAndFilterIdsOuter.firstCall.args[0] as (l: number, s: number) => unknown;
+          pageFn(limit, 0);
+
+          expect(queryViewByForms.calledOnceWithExactly([['ANC_FollowUp']], limit, 0)).to.be.true;
+        });
+
+        it('drops duplicate form codes even when the qualifier bypasses byForms()', async () => {
+          const qualifier = { forms: ['pregnancy', 'pregnancy', 'delivery'] as [string, ...string[]] };
+
+          await Report.v1.getUuidsPage(localContext)(qualifier, null, limit);
+
+          const pageFn = fetchAndFilterIdsOuter.firstCall.args[0] as (l: number, s: number) => unknown;
+          pageFn(limit, 0);
+
+          expect(queryViewByForms.calledOnceWithExactly([['pregnancy'], ['delivery']], limit, 0)).to.be.true;
+        });
+
+        it('throws an error if cursor is invalid', async () => {
+          const qualifier = Qualifier.byForms(['pregnancy']);
+          const cursor = 'not a number';
+
+          await expect(Report.v1.getUuidsPage(localContext)(qualifier, cursor, limit))
+            .to.be.rejectedWith(
+              InvalidArgumentError,
+              `The cursor must be a string or null for first page: [${JSON.stringify(cursor)}]`
+            );
+
+          expect(queryViewByForms.notCalled).to.be.true;
+          expect(fetchAndFilterIdsOuter.notCalled).to.be.true;
+          expect(fetchAndFilterIdsInner.notCalled).to.be.true;
+        });
+
+        it('prefers the freetext branch when a qualifier satisfies both', async () => {
+          const qualifier = { freetext: 'searchterm', forms: ['pregnancy'] };
+          queryNouveauFreetext.resolves(expectedResult);
+
+          const res = await Report.v1.getUuidsPage(localContext)(qualifier, null, limit);
+
+          expect(res).to.deep.equal(expectedResult);
+          expect(queryNouveauFreetext.calledOnce).to.be.true;
+          expect(queryViewByForms.notCalled).to.be.true;
+        });
+      });
+    });
+
+    // Unlike the stubbed dispatch tests above, this exercises the real page-assembly and cursor
+    // arithmetic against a fake view, so it would catch an off-by-one in the skip/cursor handling.
+    describe('getUuidsPage by form (pagination)', () => {
+      const allUuids = Array.from({ length: 12 }, (_, i) => `report-${i.toString()}`);
+      // Emulates the reports_by_form view: only rows whose key matches the qualifier are returned.
+      const viewRows: Record<string, string[]> = {
+        pregnancy: allUuids,
+        anc_followup: ['anc-0'],
+        delivery: ['delivery-0', 'delivery-1', 'delivery-2'],
+      };
+
+      beforeEach(() => {
+        sinon.stub(Nouveau, 'useNouveauIndexes').resolves(false);
+        sinon
+          .stub(LocalDoc, 'queryDocIdsByKeys')
+          .withArgs(localContext.medicDb, 'medic-client/reports_by_form')
+          .returns((keys: unknown, limit: number, skip: number) => {
+            // Emulates CouchDB's `keys` behavior: rows come back grouped in the order the keys are
+            // supplied, and skip/limit then apply to that concatenation rather than per key. Getting
+            // this wrong is what an off-by-one across a form boundary would look like.
+            const rows = (keys as [string][]).flatMap(([form]) => viewRows[form] ?? []);
+            return Promise.resolve(rows.slice(skip, skip + limit));
+          });
+      });
+
+      it('walks the full result set across cursor pages', async () => {
+        const getUuidsPage = Report.v1.getUuidsPage(localContext);
+        const qualifier = Qualifier.byForms(['pregnancy']);
+
+        const page1 = await getUuidsPage(qualifier, null, 5);
+        expect(page1.data).to.deep.equal(allUuids.slice(0, 5));
+        expect(page1.cursor).to.equal('5');
+
+        const page2 = await getUuidsPage(qualifier, page1.cursor, 5);
+        expect(page2.data).to.deep.equal(allUuids.slice(5, 10));
+        expect(page2.cursor).to.equal('10');
+
+        const page3 = await getUuidsPage(qualifier, page2.cursor, 5);
+        expect(page3.data).to.deep.equal(allUuids.slice(10));
+        expect(page3.cursor).to.be.null;
+      });
+
+      it('returns an empty final page with a null cursor when the set divides evenly', async () => {
+        const getUuidsPage = Report.v1.getUuidsPage(localContext);
+        const qualifier = Qualifier.byForms(['pregnancy']);
+
+        const page1 = await getUuidsPage(qualifier, null, 6);
+        expect(page1.data).to.deep.equal(allUuids.slice(0, 6));
+        expect(page1.cursor).to.equal('6');
+
+        const page2 = await getUuidsPage(qualifier, page1.cursor, 6);
+        expect(page2.data).to.deep.equal(allUuids.slice(6, 12));
+        expect(page2.cursor).to.equal('12');
+
+        const page3 = await getUuidsPage(qualifier, page2.cursor, 6);
+        expect(page3.data).to.deep.equal([]);
+        expect(page3.cursor).to.be.null;
+      });
+
+      it('returns only the reports recorded with the requested form', async () => {
+        const getUuidsPage = Report.v1.getUuidsPage(localContext);
+
+        const page = await getUuidsPage(Qualifier.byForms(['anc_followup']), null, 5);
+
+        expect(page.data).to.deep.equal(['anc-0']);
+        expect(page.cursor).to.be.null;
+      });
+
+      it('returns an empty page for a form with no reports', async () => {
+        const getUuidsPage = Report.v1.getUuidsPage(localContext);
+
+        const page = await getUuidsPage(Qualifier.byForms(['no_such_form']), null, 5);
+
+        expect(page.data).to.deep.equal([]);
+        expect(page.cursor).to.be.null;
+      });
+
+      it('returns the reports of every requested form', async () => {
+        const getUuidsPage = Report.v1.getUuidsPage(localContext);
+
+        const page = await getUuidsPage(Qualifier.byForms(['anc_followup', 'delivery']), null, 10);
+
+        expect(page.data).to.deep.equal(['anc-0', 'delivery-0', 'delivery-1', 'delivery-2']);
+        expect(page.cursor).to.be.null;
+      });
+
+      it('pages across a form boundary without dropping or repeating a report', async () => {
+        const getUuidsPage = Report.v1.getUuidsPage(localContext);
+        const qualifier = Qualifier.byForms(['anc_followup', 'delivery']);
+
+        // Page size 2 puts the boundary between the two forms mid-page, which is where a per-key
+        // rather than whole-result-set skip would show up.
+        const page1 = await getUuidsPage(qualifier, null, 2);
+        expect(page1.data).to.deep.equal(['anc-0', 'delivery-0']);
+        expect(page1.cursor).to.equal('2');
+
+        const page2 = await getUuidsPage(qualifier, page1.cursor, 2);
+        expect(page2.data).to.deep.equal(['delivery-1', 'delivery-2']);
+        expect(page2.cursor).to.equal('4');
+
+        const page3 = await getUuidsPage(qualifier, page2.cursor, 2);
+        expect(page3.data).to.deep.equal([]);
+        expect(page3.cursor).to.be.null;
+      });
+
+      it('skips a form with no reports without disturbing the others', async () => {
+        const getUuidsPage = Report.v1.getUuidsPage(localContext);
+
+        const page = await getUuidsPage(Qualifier.byForms(['no_such_form', 'anc_followup']), null, 5);
+
+        expect(page.data).to.deep.equal(['anc-0']);
+        expect(page.cursor).to.be.null;
+      });
+
+    });
+
+    describe('getPage', () => {
+      const limit = 3;
+      const notNullCursor = '5';
+      let getDocsByIdsInner: SinonStub;
+      let getDocsByIdsOuter: SinonStub;
+      let fetchAndFilterInner: SinonStub;
+      let fetchAndFilterOuter: SinonStub;
+
+      beforeEach(() => {
+        getDocsByIdsInner = sinon.stub();
+        getDocsByIdsOuter = sinon.stub(LocalDoc, 'getDocsByIds').returns(getDocsByIdsInner);
+        fetchAndFilterInner = sinon.stub();
+        fetchAndFilterOuter = sinon.stub(LocalDoc, 'fetchAndFilter').returns(fetchAndFilterInner);
+      });
+
+      it('returns a page of reports for the given ids, hydrating the sliced page via getDocsByIds', async () => {
+        const ids: [string, ...string[]] = ['r1', 'r2', 'r3', 'r4'];
+        const qualifier = { ids };
+        const expectedResult = { cursor: '3', data: [{ type: 'data_record', form: 'a' }] };
+        fetchAndFilterInner.resolves(expectedResult);
+
+        const res = await Report.v1.getPage(localContext)(qualifier, notNullCursor, limit);
+
+        expect(res).to.deep.equal(expectedResult);
+        expect(getDocsByIdsOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        const getPageFn = fetchAndFilterOuter.firstCall.args[0];
+        expect(getPageFn).to.be.a('function');
+        expect(fetchAndFilterOuter.firstCall.args[1]).to.be.a('function');
+        expect(fetchAndFilterOuter.firstCall.args[2]).to.equal(limit);
+        expect(fetchAndFilterInner.calledOnceWithExactly(limit, Number(notNullCursor))).to.be.true;
+
+        await getPageFn(2, 1);
+        expect(getDocsByIdsInner.calledOnceWithExactly(['r2', 'r3'])).to.be.true;
+      });
+
+      [
+        {},
+        '-1',
+        undefined,
+      ].forEach((invalidCursor) => {
+        it(`throws an error if cursor is invalid: ${JSON.stringify(invalidCursor)}`, async () => {
+          const ids: [string, ...string[]] = ['r1'];
+          const expectedMessage =
+            `The cursor must be a string or null for first page: [${JSON.stringify(invalidCursor)}]`;
+          await expect(Report.v1.getPage(localContext)({ ids }, invalidCursor as string, limit))
+            .to.be.rejectedWith(expectedMessage);
+
+          expect(fetchAndFilterOuter.notCalled).to.be.true;
+          expect(fetchAndFilterInner.notCalled).to.be.true;
+        });
+      });
+    });
+
+    describe('create', () => {
+      const minifiedContact = {
+        _id: 'contact-1',
+        parent: { _id: 'parent-1' }
+      } as const;
+      const contact = {
+        ...minifiedContact,
+        _rev: '1',
+        type: 'person',
+      } as const;
+      const reportDoc = { _id: 'report-1', type: DOC_TYPES.DATA_RECORD, form: 'test-form' } as const;
+      const supportedForms = ['test-form', 'other-form'];
+      const reportedDate = new Date().getTime();
+
+      let getDocByIdOuter: SinonStub;
+      let getDocByIdInner: SinonStub;
+      let createDocOuter: SinonStub;
+      let createDocInner: SinonStub;
+      let getDocIdsByIdRangeOuter: SinonStub;
+      let getDocIdsByIdRangeInner: SinonStub;
+      let isContact: SinonStub;
+      let getReportedDateTimestamp: SinonStub;
+
+      beforeEach(() => {
+        getDocByIdInner = sinon.stub().resolves(contact);
+        getDocByIdOuter = sinon
+          .stub(LocalDoc, 'getDocById')
+          .returns(getDocByIdInner);
+        createDocInner = sinon.stub().resolves(reportDoc);
+        createDocOuter = sinon
+          .stub(LocalDoc, 'createDoc')
+          .returns(createDocInner);
+        getDocIdsByIdRangeInner = sinon.stub().resolves(supportedForms.map(f => `form:${f}`));
+        getDocIdsByIdRangeOuter = sinon
+          .stub(LocalDoc, 'getDocIdsByIdRange')
+          .returns(getDocIdsByIdRangeInner);
+        isContact = sinon
+          .stub(LocalContact.v1, 'isContact')
+          .returns(true);
+        getReportedDateTimestamp = sinon
+          .stub(LocalCore, 'getReportedDateTimestamp')
+          .returns(reportedDate);
+        settingsGetAll.returns(settings);
+      });
+
+      it('creates a report with valid input', async () => {
+        const input = {
+          form: 'test-form',
+          contact: contact._id,
+        };
+
+        const result = await Report.v1.create(localContext)(input);
+
+        expect(result).to.equal(reportDoc);
+        expect(getDocByIdOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(createDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocIdsByIdRangeOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocByIdInner.calledOnceWithExactly(input.contact)).to.be.true;
+        expect(getDocIdsByIdRangeInner.calledOnceWithExactly('form:', 'form:\ufff0')).to.be.true;
+        expect(isContact.calledOnceWithExactly(localContext.settings, contact)).to.be.true;
+        expect(getReportedDateTimestamp.calledOnceWithExactly(undefined)).to.be.true;
+        const expectedReport = {
+          ...input,
+          contact: minifiedContact,
+          reported_date: reportedDate,
+          type: DOC_TYPES.DATA_RECORD
+        };
+        expect(createDocInner.calledOnceWithExactly(expectedReport)).to.be.true;
+      });
+
+      it('creates a report with reported_date in input', async () => {
+        const input = {
+          form: 'test-form',
+          contact: contact._id,
+          reported_date: 123456789
+        };
+
+        const result = await Report.v1.create(localContext)(input);
+
+        expect(result).to.equal(reportDoc);
+        expect(getDocByIdOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(createDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocIdsByIdRangeOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocByIdInner.calledOnceWithExactly(input.contact)).to.be.true;
+        expect(getDocIdsByIdRangeInner.calledOnceWithExactly('form:', 'form:\ufff0')).to.be.true;
+        expect(isContact.calledOnceWithExactly(localContext.settings, contact)).to.be.true;
+        expect(getReportedDateTimestamp.calledOnceWithExactly(input.reported_date)).to.be.true;
+        const expectedReport = {
+          ...input,
+          contact: minifiedContact,
+          reported_date: reportedDate,
+          type: DOC_TYPES.DATA_RECORD
+        };
+        expect(createDocInner.calledOnceWithExactly(expectedReport)).to.be.true;
+      });
+
+      it('throws error if input validation fails', async () => {
+        const input = {
+          form: 'test-form',
+          contact: contact._id,
+          _rev: '1-rev'
+        };
+
+        await expect(Report.v1.create(localContext)(input as unknown as never))
+          .to.be.rejectedWith(InvalidArgumentError, 'The [_rev] field must not be set.');
+
+        expect(getDocByIdOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(createDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocIdsByIdRangeOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocByIdInner.notCalled).to.be.true;
+        expect(getDocIdsByIdRangeInner.notCalled).to.be.true;
+        expect(isContact.notCalled).to.be.true;
+        expect(getReportedDateTimestamp.notCalled).to.be.true;
+        expect(createDocInner.notCalled).to.be.true;
+      });
+
+      it('throws error if form is not supported', async () => {
+        const input = {
+          form: 'unsupported-form',
+          contact: contact._id,
+        };
+
+        await expect(Report.v1.create(localContext)(input))
+          .to.be.rejectedWith(`Invalid form value [${input.form}].`);
+
+        expect(getDocByIdOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(createDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocIdsByIdRangeOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocByIdInner.calledOnceWithExactly(input.contact)).to.be.true;
+        expect(getDocIdsByIdRangeInner.calledOnceWithExactly('form:', 'form:\ufff0')).to.be.true;
+        expect(isContact.notCalled).to.be.true;
+        expect(getReportedDateTimestamp.notCalled).to.be.true;
+        expect(createDocInner.notCalled).to.be.true;
+      });
+
+      [
+        null,
+        { _id: 'non-existent-contact', type: DOC_TYPES.DATA_RECORD }
+      ].forEach(invalidContact => {
+        it('throws error if contact is not found', async () => {
+          const input = {
+            form: 'test-form',
+            contact: 'non-existent-contact',
+          };
+          getDocByIdInner.resolves(invalidContact);
+          isContact.returns(false);
+
+          await expect(Report.v1.create(localContext)(input))
+            .to.be.rejectedWith(`Contact [${input.contact}] not found.`);
+
+          expect(getDocByIdOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+          expect(createDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+          expect(getDocIdsByIdRangeOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+          expect(getDocByIdInner.calledOnceWithExactly(input.contact)).to.be.true;
+          expect(getDocIdsByIdRangeInner.calledOnceWithExactly('form:', 'form:\ufff0')).to.be.true;
+          expect(isContact.calledOnceWithExactly(localContext.settings, invalidContact)).to.be.true;
+          expect(getReportedDateTimestamp.notCalled).to.be.true;
+          expect(createDocInner.notCalled).to.be.true;
+        });
+      });
+    });
+
+    describe('update', () => {
+      const originalReport = {
+        _id: 'report-1',
+        _rev: '1-rev',
+        type: DOC_TYPES.DATA_RECORD,
+        form: 'test-form',
+        reported_date: 12312312,
+        contact: {
+          _id: 'contact-1',
+          parent: {
+            _id: 'parent-1'
+          }
+        },
+        fields: { hello: 'world' }
+      } as const;
+      const contactDoc = { _id: 'contact-1', type: 'person' } as const;
+      const newContactMinified = {
+        _id: 'contact-2',
+        parent: {
+          _id: 'parent-1'
+        }
+      };
+      const newContact = {
+        ...newContactMinified,
+        _rev: '1',
+        type: 'person'
+      };
+      const supportedForms = ['test-form', 'other-form', 'new-form'];
+
+      let getDocsByIdsOuter: SinonStub;
+      let getDocsByIdsInner: SinonStub;
+      let updateDocOuter: SinonStub;
+      let updateDocInner: SinonStub;
+      let getDocIdsByIdRangeOuter: SinonStub;
+      let getDocIdsByIdRangeInner: SinonStub;
+      let getUpdatedContactOuter: SinonStub;
+      let getUpdatedContactInner: SinonStub;
+
+      beforeEach(() => {
+        getDocsByIdsInner = sinon
+          .stub()
+          .resolves([originalReport, contactDoc]);
+        getDocsByIdsOuter = sinon
+          .stub(LocalDoc, 'getDocsByIds')
+          .returns(getDocsByIdsInner);
+        updateDocInner = sinon.stub();
+        updateDocOuter = sinon
+          .stub(LocalDoc, 'updateDoc')
+          .returns(updateDocInner);
+        getDocIdsByIdRangeInner = sinon
+          .stub()
+          .resolves(supportedForms.map(f => `form:${f}`));
+        getDocIdsByIdRangeOuter = sinon
+          .stub(LocalDoc, 'getDocIdsByIdRange')
+          .returns(getDocIdsByIdRangeInner);
+        getUpdatedContactInner = sinon.stub();
+        getUpdatedContactOuter = sinon
+          .stub(Lineage, 'getUpdatedContact')
+          .returns(getUpdatedContactInner);
+        settingsGetAll.returns(settings);
+      });
+
+      it('updates doc for valid update input', async () => {
+        const updateInput = {
+          ...originalReport,
+          fields: { hello: 'updated' }
+        };
+        getUpdatedContactInner.returns(updateInput.contact);
+        updateDocInner.resolves({ _rev: '2-rev' });
+
+        const result = await Report.v1.update(localContext)(updateInput);
+
+        expect(result).to.deep.equal({ ...updateInput, _rev: '2-rev' });
+        expect(getDocsByIdsOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(updateDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getUpdatedContactOuter.calledOnceWithExactly(localContext.settings, localContext.medicDb)).to.be.true;
+        expect(getDocIdsByIdRangeOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocsByIdsInner.calledOnceWithExactly([updateInput._id, 'contact-1'])).to.be.true;
+        expect(getDocIdsByIdRangeInner.notCalled).to.be.true;
+        expect(getUpdatedContactInner.calledOnceWithExactly(originalReport, updateInput, contactDoc)).to.be.true;
+        expect(updateDocInner.calledOnceWithExactly(updateInput)).to.be.true;
+      });
+
+      [
+        { ...originalReport, _id: undefined },
+        { ...originalReport, _rev: undefined },
+        { ...originalReport, type: 'not-data-record' },
+        { ...originalReport, form: undefined },
+      ].forEach((updateInput) => {
+        it(`throws error if input is not a valid report`, async () => {
+          await expect(Report.v1.update(localContext)(updateInput as never))
+            .to.be.rejectedWith(InvalidArgumentError, 'Valid _id, _rev, form, and type fields must be provided.');
+
+          expect(getDocsByIdsOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+          expect(updateDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+          expect(getUpdatedContactOuter.calledOnceWithExactly(localContext.settings, localContext.medicDb)).to.be.true;
+          expect(getDocIdsByIdRangeOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+          expect(getDocsByIdsInner.notCalled).to.be.true;
+          expect(getDocIdsByIdRangeInner.notCalled).to.be.true;
+          expect(getUpdatedContactInner.notCalled).to.be.true;
+          expect(updateDocInner.notCalled).to.be.true;
+        });
+      });
+
+      it('throws error when original report is not found', async () => {
+        getDocsByIdsInner.resolves([null, contactDoc]);
+
+        await expect(Report.v1.update(localContext)(originalReport))
+          .to.be.rejectedWith(ResourceNotFoundError, `Report record [${originalReport._id}] not found.`);
+
+        expect(getDocsByIdsOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(updateDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getUpdatedContactOuter.calledOnceWithExactly(localContext.settings, localContext.medicDb)).to.be.true;
+        expect(getDocIdsByIdRangeOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocsByIdsInner.calledOnceWithExactly([originalReport._id, 'contact-1'])).to.be.true;
+        expect(getDocIdsByIdRangeInner.notCalled).to.be.true;
+        expect(getUpdatedContactInner.notCalled).to.be.true;
+        expect(updateDocInner.notCalled).to.be.true;
+      });
+
+      it('throws error when trying to remove contact value', async () => {
+        const updateInput = { ...originalReport, contact: undefined };
+        getDocsByIdsInner.resolves([originalReport, null]);
+        getUpdatedContactInner.returns(null);
+
+        await expect(Report.v1.update(localContext)(updateInput))
+          .to.be.rejectedWith(InvalidArgumentError, 'A contact must be provided.');
+
+        expect(getDocsByIdsOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(updateDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getUpdatedContactOuter.calledOnceWithExactly(localContext.settings, localContext.medicDb)).to.be.true;
+        expect(getDocIdsByIdRangeOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocsByIdsInner.calledOnceWithExactly([updateInput._id, undefined])).to.be.true;
+        expect(getDocIdsByIdRangeInner.notCalled).to.be.true;
+        expect(getUpdatedContactInner.calledOnceWithExactly(originalReport, updateInput, null)).to.be.true;
+        expect(updateDocInner.notCalled).to.be.true;
+      });
+
+      it('allows update when original report has no contact', async () => {
+        const originalReportNoContact = {
+          ...originalReport,
+          contact: undefined
+        };
+        const updateInput = {
+          ...originalReportNoContact,
+          fields: { hello: 'updated' }
+        };
+        getDocsByIdsInner.resolves([originalReportNoContact, undefined]);
+        getUpdatedContactInner.returns(undefined);
+        updateDocInner.resolves({ _rev: '2-rev' });
+
+        const result = await Report.v1.update(localContext)(updateInput);
+
+        expect(result).to.deep.equal({ ...updateInput, contact: undefined, _rev: '2-rev' });
+        expect(getDocsByIdsOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(updateDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getUpdatedContactOuter.calledOnceWithExactly(localContext.settings, localContext.medicDb)).to.be.true;
+        expect(getDocIdsByIdRangeOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocsByIdsInner.calledOnceWithExactly([updateInput._id, undefined])).to.be.true;
+        expect(getDocIdsByIdRangeInner.notCalled).to.be.true;
+        expect(getUpdatedContactInner.calledOnceWithExactly(
+          originalReportNoContact,
+          updateInput,
+          undefined
+        )).to.be.true;
+        expect(updateDocInner.calledOnceWithExactly(updateInput)).to.be.true;
+      });
+
+      it('allows setting contact when original report has no contact', async () => {
+        const originalReportNoContact = {
+          ...originalReport,
+          contact: undefined
+        };
+        const updateInput = {
+          ...originalReport,
+          fields: { hello: 'updated' }
+        };
+        getDocsByIdsInner.resolves([originalReportNoContact, contactDoc]);
+        getUpdatedContactInner.returns(updateInput.contact);
+        updateDocInner.resolves({ _rev: '2-rev' });
+
+        const result = await Report.v1.update(localContext)(updateInput);
+
+        expect(result).to.deep.equal({ ...updateInput, _rev: '2-rev' });
+        expect(getDocsByIdsOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(updateDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getUpdatedContactOuter.calledOnceWithExactly(localContext.settings, localContext.medicDb)).to.be.true;
+        expect(getDocIdsByIdRangeOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocsByIdsInner.calledOnceWithExactly([updateInput._id, contactDoc._id])).to.be.true;
+        expect(getDocIdsByIdRangeInner.notCalled).to.be.true;
+        expect(getUpdatedContactInner.calledOnceWithExactly(
+          originalReportNoContact,
+          updateInput,
+          contactDoc
+        )).to.be.true;
+        expect(updateDocInner.calledOnceWithExactly(updateInput)).to.be.true;
+      });
+
+      ([
+        ['_rev', { ...originalReport, _rev: 'updated' }],
+        ['reported_date', { ...originalReport, reported_date: 999999999 }],
+      ] as unknown as [string, typeof originalReport][]).forEach(([field, updateInput]) => {
+        it(`throws error when changing immutable field [${field}]`, async () => {
+          getUpdatedContactInner.returns(updateInput.contact);
+
+          await expect(Report.v1.update(localContext)(updateInput))
+            .to.be.rejectedWith(InvalidArgumentError, `The [${field}] fields must not be changed.`);
+
+          expect(getDocsByIdsOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+          expect(updateDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+          expect(getUpdatedContactOuter.calledOnceWithExactly(localContext.settings, localContext.medicDb)).to.be.true;
+          expect(getDocIdsByIdRangeOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+          expect(getDocsByIdsInner.calledOnceWithExactly([updateInput._id, 'contact-1'])).to.be.true;
+          expect(getDocIdsByIdRangeInner.notCalled).to.be.true;
+          expect(getUpdatedContactInner.calledOnceWithExactly(originalReport, updateInput, contactDoc)).to.be.true;
+          expect(updateDocInner.notCalled).to.be.true;
+        });
+      });
+
+      it('allows changing form to another valid form', async () => {
+        const updateInput = {
+          ...originalReport,
+          form: 'new-form'
+        };
+        getUpdatedContactInner.returns(updateInput.contact);
+        updateDocInner.resolves({ _rev: '2-rev' });
+
+        const result = await Report.v1.update(localContext)(updateInput);
+
+        expect(result).to.deep.equal({ ...updateInput, _rev: '2-rev' });
+        expect(getDocsByIdsOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(updateDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getUpdatedContactOuter.calledOnceWithExactly(localContext.settings, localContext.medicDb)).to.be.true;
+        expect(getDocIdsByIdRangeOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocsByIdsInner.calledOnceWithExactly([updateInput._id, 'contact-1'])).to.be.true;
+        expect(getDocIdsByIdRangeInner.calledOnceWithExactly('form:', 'form:\ufff0')).to.be.true;
+        expect(getUpdatedContactInner.calledOnceWithExactly(originalReport, updateInput, contactDoc)).to.be.true;
+        expect(updateDocInner.calledOnceWithExactly(updateInput)).to.be.true;
+      });
+
+      it('throws error when changing form to an invalid form', async () => {
+        const updateInput = {
+          ...originalReport,
+          form: 'invalid-form'
+        };
+        getUpdatedContactInner.returns(updateInput.contact);
+
+        await expect(Report.v1.update(localContext)(updateInput))
+          .to.be.rejectedWith(InvalidArgumentError, `Invalid form value [${updateInput.form}].`);
+
+        expect(getDocsByIdsOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(updateDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getUpdatedContactOuter.calledOnceWithExactly(localContext.settings, localContext.medicDb)).to.be.true;
+        expect(getDocIdsByIdRangeOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+        expect(getDocsByIdsInner.calledOnceWithExactly([updateInput._id, 'contact-1'])).to.be.true;
+        expect(getDocIdsByIdRangeInner.calledOnceWithExactly('form:', 'form:\ufff0')).to.be.true;
+        expect(getUpdatedContactInner.calledOnceWithExactly(originalReport, updateInput, contactDoc)).to.be.true;
+        expect(updateDocInner.notCalled).to.be.true;
+      });
+
+      [
+        newContact, // Full contact
+        newContactMinified, // Contact hierarchy
+        newContact._id // Just Id
+      ].forEach(contact => {
+        it('updates report when new contact', async () => {
+          const updateInput = {
+            ...originalReport,
+            contact
+          };
+          getUpdatedContactInner.returns(newContact);
+          updateDocInner.resolves({ _rev: '2-rev' });
+          getDocsByIdsInner.resolves([originalReport, newContact]);
+
+          const result = await Report.v1.update(localContext)(updateInput as unknown as typeof originalReport);
+
+          // Full lineage data returned
+          expect(result).to.deep.equal({ ...updateInput, contact: newContact,  _rev: '2-rev' });
+          expect(getDocsByIdsOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+          expect(updateDocOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+          expect(getUpdatedContactOuter.calledOnceWithExactly(localContext.settings, localContext.medicDb)).to.be.true;
+          expect(getDocIdsByIdRangeOuter.calledOnceWithExactly(localContext.medicDb)).to.be.true;
+          expect(getDocsByIdsInner.calledOnceWithExactly([updateInput._id, 'contact-2'])).to.be.true;
+          expect(getDocIdsByIdRangeInner.notCalled).to.be.true;
+          expect(getUpdatedContactInner.args).to.deep.equal([[originalReport, updateInput, newContact]]);
+          expect(getUpdatedContactInner.calledOnceWithExactly(originalReport, updateInput, newContact)).to.be.true;
+          // Minified lineage set on updated doc
+          expect(updateDocInner.calledOnceWithExactly({ ...updateInput, contact: newContactMinified })).to.be.true;
+        });
+      });
+    });
+  });
+});

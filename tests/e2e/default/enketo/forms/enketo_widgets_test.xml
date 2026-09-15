@@ -1,0 +1,413 @@
+<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml" xmlns:ev="http://www.w3.org/2001/xml-events" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:jr="http://openrosa.org/javarosa" xmlns:orx="http://openrosa.org/xforms" xmlns:odk="http://www.opendatakit.org/xforms">
+  <h:head>
+    <h:title>Enketo Widgets</h:title>
+    <model odk:xforms-version="1.0.0">
+      <itext>
+        <translation lang="en">
+          <text id="list-0">
+            <value>option a</value>
+          </text>
+          <text id="list-1">
+            <value>option b</value>
+          </text>
+          <text id="list-2">
+            <value>option c</value>
+          </text>
+          <text id="list-3">
+            <value>option d</value>
+          </text>
+          <text id="countries-0">
+            <value>The Netherlands</value>
+          </text>
+          <text id="countries-1">
+            <value>United States</value>
+          </text>
+          <text id="cities-0">
+            <value>Amsterdam</value>
+          </text>
+          <text id="cities-1">
+            <value>Denver</value>
+          </text>
+          <text id="cities-2">
+            <value>New York City</value>
+          </text>
+          <text id="cities-3">
+            <value>Los Angeles</value>
+          </text>
+          <text id="cities-4">
+            <value>Rotterdam</value>
+          </text>
+          <text id="cities-5">
+            <value>Dronten</value>
+          </text>
+          <text id="neighborhoods-0">
+            <value>Bronx</value>
+          </text>
+          <text id="neighborhoods-1">
+            <value>Harlem</value>
+          </text>
+          <text id="neighborhoods-2">
+            <value>Bel Air</value>
+          </text>
+          <text id="neighborhoods-3">
+            <value>Westerpark</value>
+          </text>
+          <text id="neighborhoods-4">
+            <value>Park Hill</value>
+          </text>
+          <text id="neighborhoods-5">
+            <value>Harbor</value>
+          </text>
+          <text id="neighborhoods-6">
+            <value>Dam</value>
+          </text>
+          <text id="neighborhoods-7">
+            <value>Downtown</value>
+          </text>
+          <text id="neighborhoods-8">
+            <value>Harbor</value>
+          </text>
+          <text id="/data/enketo_test_select:label">
+            <value>Select widgets</value>
+          </text>
+          <text id="/data/enketo_test_select/select_spinner:label">
+            <value>Select multiple: pulldown</value>
+          </text>
+          <text id="/data/enketo_test_select/select1_spinner:label">
+            <value>Select one: pulldown</value>
+          </text>
+          <text id="/data/cascading_widgets:label">
+            <value>Cascading Select widgets</value>
+          </text>
+          <text id="/data/cascading_widgets/group1:label">
+            <value>Cascading Selects with Radio Buttons</value>
+          </text>
+          <text id="/data/cascading_widgets/group1/country:label">
+            <value>Country</value>
+          </text>
+          <text id="/data/cascading_widgets/group1/city:label">
+            <value>City</value>
+          </text>
+          <text id="/data/cascading_widgets/group1/neighborhood:label">
+            <value>Neighborhood</value>
+          </text>
+          <text id="/data/cascading_widgets/group2:label">
+            <value>Cascading Selects with Pulldowns</value>
+          </text>
+          <text id="/data/cascading_widgets/group2/country2:label">
+            <value>Country</value>
+          </text>
+          <text id="/data/cascading_widgets/group2/city2:label">
+            <value>City</value>
+          </text>
+          <text id="/data/cascading_widgets/group2/neighborhood2:label">
+            <value>Neighborhood</value>
+          </text>
+          <text id="/data/inputs:label">
+            <value>Patient</value>
+          </text>
+          <text id="/data/inputs/contact/_id:label">
+            <value>What is the patient's uuid?</value>
+          </text>
+          <text id="/data/inputs/contact/patient_id:label">
+            <value>What is the patient's id?</value>
+          </text>
+          <text id="/data/inputs/contact/name:jr:constraintMsg">
+            <value>Name should contain more than 4 characters</value>
+          </text>
+          <text id="/data/inputs/contact/name:label">
+            <value>What is the patient's name?</value>
+          </text>
+          <text id="/data/patient_uuid:label">
+            <value>Patient UUID</value>
+          </text>
+          <text id="/data/patient_id:label">
+            <value>Patient ID</value>
+          </text>
+          <text id="/data/patient_name:label">
+            <value>Patient Name</value>
+          </text>
+        </translation>
+      </itext>
+      <instance>
+        <data id="enketo_widgets_test" version="2024-08-16 00:00:00" prefix="J1!enketo_widgets_test!" delimiter="#">
+          <enketo_test_select>
+            <select_spinner/>
+            <select1_spinner/>
+          </enketo_test_select>
+          <cascading_widgets>
+            <group1>
+              <country/>
+              <city/>
+              <neighborhood/>
+            </group1>
+            <group2>
+              <country2/>
+              <city2/>
+              <neighborhood2/>
+            </group2>
+          </cascading_widgets>
+          <inputs>
+            <meta>
+              <location>
+                <lat/>
+                <long/>
+                <error/>
+                <message/>
+              </location>
+            </meta>
+            <source>user</source>
+            <source_id/>
+            <contact>
+              <_id/>
+              <patient_id/>
+              <name/>
+            </contact>
+          </inputs>
+          <patient_uuid/>
+          <patient_id/>
+          <patient_name/>
+          <meta tag="hidden">
+            <instanceID/>
+          </meta>
+        </data>
+      </instance>
+      <instance id="contact-summary"/>
+      <instance id="user-contact-summary"/>
+      <instance id="list">
+        <root>
+          <item>
+            <itextId>list-0</itextId>
+            <name>a</name>
+          </item>
+          <item>
+            <itextId>list-1</itextId>
+            <name>b</name>
+          </item>
+          <item>
+            <itextId>list-2</itextId>
+            <name>c</name>
+          </item>
+          <item>
+            <itextId>list-3</itextId>
+            <name>d</name>
+          </item>
+        </root>
+      </instance>
+      <instance id="countries">
+        <root>
+          <item>
+            <itextId>countries-0</itextId>
+            <name>nl</name>
+          </item>
+          <item>
+            <itextId>countries-1</itextId>
+            <name>usa</name>
+          </item>
+        </root>
+      </instance>
+      <instance id="cities">
+        <root>
+          <item>
+            <itextId>cities-0</itextId>
+            <name>ams</name>
+            <country>nl</country>
+          </item>
+          <item>
+            <itextId>cities-1</itextId>
+            <name>den</name>
+            <country>usa</country>
+          </item>
+          <item>
+            <itextId>cities-2</itextId>
+            <name>nyc</name>
+            <country>usa</country>
+          </item>
+          <item>
+            <itextId>cities-3</itextId>
+            <name>la</name>
+            <country>usa</country>
+          </item>
+          <item>
+            <itextId>cities-4</itextId>
+            <name>rot</name>
+            <country>nl</country>
+          </item>
+          <item>
+            <itextId>cities-5</itextId>
+            <name>dro</name>
+            <country>nl</country>
+          </item>
+        </root>
+      </instance>
+      <instance id="neighborhoods">
+        <root>
+          <item>
+            <itextId>neighborhoods-0</itextId>
+            <name>bronx</name>
+            <country>usa</country>
+            <city>nyc</city>
+          </item>
+          <item>
+            <itextId>neighborhoods-1</itextId>
+            <name>harlem</name>
+            <country>usa</country>
+            <city>nyc</city>
+          </item>
+          <item>
+            <itextId>neighborhoods-2</itextId>
+            <name>belair</name>
+            <country>usa</country>
+            <city>la</city>
+          </item>
+          <item>
+            <itextId>neighborhoods-3</itextId>
+            <name>wes</name>
+            <country>nl</country>
+            <city>ams</city>
+          </item>
+          <item>
+            <itextId>neighborhoods-4</itextId>
+            <name>parkhill</name>
+            <country>usa</country>
+            <city>den</city>
+          </item>
+          <item>
+            <itextId>neighborhoods-5</itextId>
+            <name>haven</name>
+            <country>nl</country>
+            <city>rot</city>
+          </item>
+          <item>
+            <itextId>neighborhoods-6</itextId>
+            <name>dam</name>
+            <country>nl</country>
+            <city>ams</city>
+          </item>
+          <item>
+            <itextId>neighborhoods-7</itextId>
+            <name>centrum</name>
+            <country>nl</country>
+            <city>rot</city>
+          </item>
+          <item>
+            <itextId>neighborhoods-8</itextId>
+            <name>havendr</name>
+            <country>nl</country>
+            <city>dro</city>
+          </item>
+        </root>
+      </instance>
+      <bind nodeset="/data/enketo_test_select/select_spinner" type="string"/>
+      <bind nodeset="/data/enketo_test_select/select1_spinner" type="string"/>
+      <bind nodeset="/data/cascading_widgets/group1/country" type="string"/>
+      <bind nodeset="/data/cascading_widgets/group1/city" type="string"/>
+      <bind nodeset="/data/cascading_widgets/group1/neighborhood" type="string"/>
+      <bind nodeset="/data/cascading_widgets/group2/country2" type="string"/>
+      <bind nodeset="/data/cascading_widgets/group2/city2" type="string"/>
+      <bind nodeset="/data/cascading_widgets/group2/neighborhood2" type="string"/>
+      <bind nodeset="/data/inputs" relevant="./source = 'user'"/>
+      <bind nodeset="/data/inputs/source" type="string"/>
+      <bind nodeset="/data/inputs/source_id" type="string"/>
+      <bind nodeset="/data/inputs/contact/_id" type="string"/>
+      <bind nodeset="/data/inputs/contact/patient_id" type="string"/>
+      <bind nodeset="/data/inputs/contact/name" type="string" constraint="string-length(.) &gt; 4" jr:constraintMsg="jr:itext('/data/inputs/contact/name:jr:constraintMsg')"/>
+      <bind nodeset="/data/patient_uuid" type="string" calculate="../inputs/contact/_id"/>
+      <bind nodeset="/data/patient_id" type="string" calculate="../inputs/contact/patient_id"/>
+      <bind nodeset="/data/patient_name" type="string" calculate="../inputs/contact/name"/>
+      <bind nodeset="/data/meta/instanceID" type="string" readonly="true()" jr:preload="uid"/>
+    </model>
+  </h:head>
+  <h:body class="pages">
+    <group appearance="field-list" ref="/data/enketo_test_select">
+      <label ref="jr:itext('/data/enketo_test_select:label')"/>
+      <select ref="/data/enketo_test_select/select_spinner" appearance="minimal">
+        <label ref="jr:itext('/data/enketo_test_select/select_spinner:label')"/>
+        <hint>Showing a pull-down list of options (type=select_multiple list, appearance=minimal)</hint>
+        <itemset nodeset="instance('list')/root/item">
+          <value ref="name"/>
+          <label ref="jr:itext(itextId)"/>
+        </itemset>
+      </select>
+      <select1 ref="/data/enketo_test_select/select1_spinner" appearance="minimal">
+        <label ref="jr:itext('/data/enketo_test_select/select1_spinner:label')"/>
+        <hint>Showing a pull-down list of options (type=select_one list, appearance=minimal)</hint>
+        <itemset nodeset="instance('list')/root/item">
+          <value ref="name"/>
+          <label ref="jr:itext(itextId)"/>
+        </itemset>
+      </select1>
+    </group>
+    <group appearance="field-list" ref="/data/cascading_widgets">
+      <label ref="jr:itext('/data/cascading_widgets:label')"/>
+      <group ref="/data/cascading_widgets/group1">
+        <label ref="jr:itext('/data/cascading_widgets/group1:label')"/>
+        <select1 ref="/data/cascading_widgets/group1/country">
+          <label ref="jr:itext('/data/cascading_widgets/group1/country:label')"/>
+          <itemset nodeset="instance('countries')/root/item">
+            <value ref="name"/>
+            <label ref="jr:itext(itextId)"/>
+          </itemset>
+        </select1>
+        <select1 ref="/data/cascading_widgets/group1/city">
+          <label ref="jr:itext('/data/cascading_widgets/group1/city:label')"/>
+          <hint> Using a choice filter to update options based on a previous answer (choice_filter: country = <output value=" /data/cascading_widgets/group1/country "/>) </hint>
+          <itemset nodeset="instance('cities')/root/item[country= /data/cascading_widgets/group1/country ]">
+            <value ref="name"/>
+            <label ref="jr:itext(itextId)"/>
+          </itemset>
+        </select1>
+        <select1 ref="/data/cascading_widgets/group1/neighborhood">
+          <label ref="jr:itext('/data/cascading_widgets/group1/neighborhood:label')"/>
+          <hint> Using a choice filter to update options based on previous answers (choice_filter: country = <output value=" /data/cascading_widgets/group1/country "/> and city = <output value=" /data/cascading_widgets/group1/city "/>) </hint>
+          <itemset nodeset="instance('neighborhoods')/root/item[country= /data/cascading_widgets/group1/country  and city= /data/cascading_widgets/group1/city ]">
+            <value ref="name"/>
+            <label ref="jr:itext(itextId)"/>
+          </itemset>
+        </select1>
+      </group>
+      <group ref="/data/cascading_widgets/group2">
+        <label ref="jr:itext('/data/cascading_widgets/group2:label')"/>
+        <select1 ref="/data/cascading_widgets/group2/country2" appearance="minimal">
+          <label ref="jr:itext('/data/cascading_widgets/group2/country2:label')"/>
+          <hint>(appearance: minimal)</hint>
+          <itemset nodeset="instance('countries')/root/item">
+            <value ref="name"/>
+            <label ref="jr:itext(itextId)"/>
+          </itemset>
+        </select1>
+        <select1 ref="/data/cascading_widgets/group2/city2" appearance="minimal">
+          <label ref="jr:itext('/data/cascading_widgets/group2/city2:label')"/>
+          <hint> Using a choice filter to update options based on a previous answer (choice_filter: country = <output value=" /data/cascading_widgets/group2/country2 "/>, appearance: minimal) </hint>
+          <itemset nodeset="instance('cities')/root/item[country= /data/cascading_widgets/group2/country2 ]">
+            <value ref="name"/>
+            <label ref="jr:itext(itextId)"/>
+          </itemset>
+        </select1>
+        <select1 ref="/data/cascading_widgets/group2/neighborhood2" appearance="minimal">
+          <label ref="jr:itext('/data/cascading_widgets/group2/neighborhood2:label')"/>
+          <hint> Using a choice filter to update options based on previous answers (choice_filter: country = <output value=" /data/cascading_widgets/group2/country2 "/> and city = <output value=" /data/cascading_widgets/group2/city2 "/>, appearance = minimal) </hint>
+          <itemset nodeset="instance('neighborhoods')/root/item[country= /data/cascading_widgets/group2/country2  and city= /data/cascading_widgets/group2/city2 ]">
+            <value ref="name"/>
+            <label ref="jr:itext(itextId)"/>
+          </itemset>
+        </select1>
+      </group>
+    </group>
+    <group appearance="field-list" ref="/data/inputs">
+      <label ref="jr:itext('/data/inputs:label')"/>
+      <group ref="/data/inputs/contact">
+        <input ref="/data/inputs/contact/_id">
+          <label ref="jr:itext('/data/inputs/contact/_id:label')"/>
+        </input>
+        <input ref="/data/inputs/contact/patient_id">
+          <label ref="jr:itext('/data/inputs/contact/patient_id:label')"/>
+        </input>
+        <input ref="/data/inputs/contact/name">
+          <label ref="jr:itext('/data/inputs/contact/name:label')"/>
+        </input>
+      </group>
+    </group>
+  </h:body>
+</h:html>

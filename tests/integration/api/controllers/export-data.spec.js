@@ -1,0 +1,731 @@
+const utils = require('@utils');
+const uuid = require('uuid').v7;
+const { DOC_TYPES, CONTACT_TYPES } = require('@medic/constants');
+
+const getRows = (result) => {
+  const rows = result.split('\n');
+  const lastRow = rows.pop(); // Last row is empty string, discard
+  expect(lastRow).to.equal('');
+  return rows;
+};
+
+const expectRows = (expected, rows) => {
+  expect(rows.length).to.equal(expected.length);
+  expect(rows[0]).to.equal(expected[0]);
+  expect(rows).to.have.members(expected);
+};
+
+describe('Export Data V2.0', () => {
+
+  after(() => utils.revertDb([], true));
+
+  describe('GET|POST /api/v2/export/reports', () => {
+    const docs = [{
+      _id: 'export-data-2-test-doc-1',
+      form: 'a',
+      type: DOC_TYPES.DATA_RECORD,
+      patient_id: 'abc123',
+      reported_date: Date.UTC(2018, 1, 1),
+      fields: {
+        foo: 'fooVal',
+        bar: 'barVal',
+        smang: {
+          smong: 'smangsmongVal'
+        }
+      }
+    }, {
+      _id: 'export-data-2-test-doc-2',
+      form: 'a',
+      type: DOC_TYPES.DATA_RECORD,
+      patient_id: 'abc124',
+      reported_date: Date.UTC(2018, 1, 2),
+      fields: {
+        foo: 'fooVal2',
+        bar: 'barVal2',
+        smang: {
+          smong: 'smangsmongVal2'
+        }
+      }
+    }, {
+      _id: 'export-data-2-test-doc-3',
+      form: 'b',
+      type: DOC_TYPES.DATA_RECORD,
+      patient_id: 'abc125',
+      reported_date: Date.UTC(2018, 1, 3),
+      fields: {
+        baz: 'bazVal',
+      }
+    }, {
+      _id: 'export-data-2-verified',
+      form: 'c',
+      type: DOC_TYPES.DATA_RECORD,
+      patient_id: 'abc125',
+      verified: true,
+      reported_date: Date.UTC(2020, 1, 3),
+      fields: {
+        baz: 'bazVal',
+      }
+    }, {
+      _id: 'export-data-2-not-verified',
+      form: 'c',
+      type: DOC_TYPES.DATA_RECORD,
+      patient_id: 'abc125',
+      verified: false,
+      reported_date: Date.UTC(2020, 1, 3),
+      fields: {
+        baz: 'bazVal',
+      }
+    }, {
+      _id: 'export-data-2-invalid',
+      form: 'c',
+      type: DOC_TYPES.DATA_RECORD,
+      patient_id: 'abc125',
+      errors: [{ code: 'error' }],
+      reported_date: Date.UTC(2020, 1, 3),
+      fields: {
+        baz: 'bazVal',
+      }
+    } ];
+
+    before(() => utils.saveDocs(docs));
+
+    it('Returns all reports that exist in the system', () => {
+      return utils.request({ path: '/api/v2/export/reports' }).then(result => {
+        const rows = getRows(result);
+        const expected = [
+          // eslint-disable-next-line @stylistic/max-len
+          '_id,form,patient_id,reported_date,from,contact.name,contact.parent.name,contact.parent.parent.name,contact.parent.parent.parent.name,bar,baz,foo,smang.smong',
+          '"export-data-2-test-doc-3","b","abc125",1517616000000,,,,,,,"bazVal",,',
+          '"export-data-2-test-doc-2","a","abc124",1517529600000,,,,,,"barVal2",,"fooVal2","smangsmongVal2"',
+          '"export-data-2-test-doc-1","a","abc123",1517443200000,,,,,,"barVal",,"fooVal","smangsmongVal"',
+          '"export-data-2-verified","c","abc125",1580688000000,,,,,,,"bazVal",,',
+          '"export-data-2-not-verified","c","abc125",1580688000000,,,,,,,"bazVal",,',
+          '"export-data-2-invalid","c","abc125",1580688000000,,,,,,,"bazVal",,',
+        ];
+        expectRows(expected, rows);
+      });
+    });
+
+    it('POST Filters by form', () => {
+      return utils.request({
+        method: 'POST',
+        path: '/api/v2/export/reports',
+        body: {
+          filters: {
+            forms: {
+              selected: [{code: 'b'}]
+            }
+          }
+        }}).then(result => {
+        const rows = getRows(result);
+        const expected = [
+          // eslint-disable-next-line @stylistic/max-len
+          '_id,form,patient_id,reported_date,from,contact.name,contact.parent.name,contact.parent.parent.name,contact.parent.parent.parent.name,baz',
+          '"export-data-2-test-doc-3","b","abc125",1517616000000,,,,,,"bazVal"'
+        ];
+        expectRows(expected, rows);
+      });
+    });
+
+    it('GET Filters by date', () => {
+      const from = Date.UTC(2018, 1, 2, 12);
+      const to = Date.UTC(2018, 1, 3, 12);
+      return utils
+        .request(
+          `/api/v2/export/reports?` +
+          `filters%5Bsearch%5D=&filters%5Bdate%5D%5Bfrom%5D=${from}&filters%5Bdate%5D%5Bto%5D=${to}`,
+          { notJson: true }
+        )
+        .then(result => {
+          const rows = getRows(result);
+          const expected = [
+            // eslint-disable-next-line @stylistic/max-len
+            '_id,form,patient_id,reported_date,from,contact.name,contact.parent.name,contact.parent.parent.name,contact.parent.parent.parent.name,bar,baz,foo,smang.smong',
+            '"export-data-2-test-doc-3","b","abc125",1517616000000,,,,,,,"bazVal",,'
+          ];
+          expectRows(expected, rows);
+        });
+    });
+
+    describe('POST filters by verified', () => {
+      it('should only export not-verified reports with empty filter', async () => {
+        const url = '/api/v2/export/reports?filters[verified]=';
+
+        const result = await utils.request(url, { notJson: true });
+        const rows = getRows(result);
+
+        const expected = [
+           
+          // eslint-disable-next-line @stylistic/max-len
+          '_id,form,patient_id,reported_date,from,contact.name,contact.parent.name,contact.parent.parent.name,contact.parent.parent.parent.name,bar,baz,foo,smang.smong',
+          '"export-data-2-test-doc-1","a","abc123",1517443200000,,,,,,"barVal",,"fooVal","smangsmongVal"',
+          '"export-data-2-test-doc-2","a","abc124",1517529600000,,,,,,"barVal2",,"fooVal2","smangsmongVal2"',
+          '"export-data-2-test-doc-3","b","abc125",1517616000000,,,,,,,"bazVal",,',
+          '"export-data-2-invalid","c","abc125",1580688000000,,,,,,,"bazVal",,'
+        ];
+        expectRows(expected, rows);
+
+        const urlArray = '/api/v2/export/reports?filters[verified][]=';
+        const resultArray = await utils.request(urlArray, { notJson: true });
+        const rowsArray = getRows(resultArray);
+        expectRows(expected, rowsArray);
+      });
+
+      it('should only export verified true reports', async () => {
+        const url = '/api/v2/export/reports?filters[verified]=true';
+
+        const result = await utils.request(url, { notJson: true });
+        const rows = getRows(result);
+        const expected = [
+           
+          // eslint-disable-next-line @stylistic/max-len
+          '_id,form,patient_id,reported_date,from,contact.name,contact.parent.name,contact.parent.parent.name,contact.parent.parent.parent.name,bar,baz,foo,smang.smong',
+          '"export-data-2-verified","c","abc125",1580688000000,,,,,,,"bazVal",,',
+        ];
+        expectRows(expected, rows);
+
+        const urlArray = '/api/v2/export/reports?filters[verified][]=true';
+        const resultArray = await utils.request(urlArray, { notJson: true });
+        const rowsArray = getRows(resultArray);
+        expectRows(expected, rowsArray);
+      });
+
+      it('should only export verified false reports', async () => {
+        const url = '/api/v2/export/reports?filters[verified]=false';
+
+        const result = await utils.request(url, { notJson: true });
+        const rows = getRows(result);
+        const expected = [
+           
+          // eslint-disable-next-line @stylistic/max-len
+          '_id,form,patient_id,reported_date,from,contact.name,contact.parent.name,contact.parent.parent.name,contact.parent.parent.parent.name,bar,baz,foo,smang.smong',
+          '"export-data-2-not-verified","c","abc125",1580688000000,,,,,,,"bazVal",,',
+        ];
+        expectRows(expected, rows);
+
+        const urlArray = '/api/v2/export/reports?filters[verified][]=false';
+
+        const resultArray = await utils.request(urlArray, { notJson: true });
+        const rowsArray = getRows(resultArray);
+        expectRows(expected, rowsArray);
+      });
+
+      it('should work with multiple selection', async () => {
+        const url = '/api/v2/export/reports?filters[verified][]=false&filters[verified][]=true';
+
+        const result = await utils.request(url, { notJson: true });
+        const rows = getRows(result);
+        const expected = [
+           
+          // eslint-disable-next-line @stylistic/max-len
+          '_id,form,patient_id,reported_date,from,contact.name,contact.parent.name,contact.parent.parent.name,contact.parent.parent.parent.name,bar,baz,foo,smang.smong',
+          '"export-data-2-not-verified","c","abc125",1580688000000,,,,,,,"bazVal",,',
+          '"export-data-2-verified","c","abc125",1580688000000,,,,,,,"bazVal",,',
+        ];
+        expectRows(expected, rows);
+
+        const urlAll = '/api/v2/export/reports?filters[verified][]=false&filters[verified][]=true&filters[verified][]=';
+        const allResults = await utils.request(urlAll, { notJson: true });
+        const allRows = getRows(allResults);
+        const allExport = [
+          // eslint-disable-next-line @stylistic/max-len
+          '_id,form,patient_id,reported_date,from,contact.name,contact.parent.name,contact.parent.parent.name,contact.parent.parent.parent.name,bar,baz,foo,smang.smong',
+          '"export-data-2-test-doc-3","b","abc125",1517616000000,,,,,,,"bazVal",,',
+          '"export-data-2-test-doc-2","a","abc124",1517529600000,,,,,,"barVal2",,"fooVal2","smangsmongVal2"',
+          '"export-data-2-test-doc-1","a","abc123",1517443200000,,,,,,"barVal",,"fooVal","smangsmongVal"',
+          '"export-data-2-verified","c","abc125",1580688000000,,,,,,,"bazVal",,',
+          '"export-data-2-not-verified","c","abc125",1580688000000,,,,,,,"bazVal",,',
+          '"export-data-2-invalid","c","abc125",1580688000000,,,,,,,"bazVal",,',
+        ];
+        expectRows(allExport, allRows);
+      });
+    });
+
+    describe('POST filters by valid', () => {
+      it('should only export valid reports on true', async () => {
+        const url = '/api/v2/export/reports?filters[valid]=true';
+
+        const result = await utils.request(url, { notJson: true });
+        const rows = getRows(result);
+        const expected = [
+           
+          // eslint-disable-next-line @stylistic/max-len
+          '_id,form,patient_id,reported_date,from,contact.name,contact.parent.name,contact.parent.parent.name,contact.parent.parent.parent.name,bar,baz,foo,smang.smong',
+          '"export-data-2-test-doc-3","b","abc125",1517616000000,,,,,,,"bazVal",,',
+          '"export-data-2-test-doc-2","a","abc124",1517529600000,,,,,,"barVal2",,"fooVal2","smangsmongVal2"',
+          '"export-data-2-test-doc-1","a","abc123",1517443200000,,,,,,"barVal",,"fooVal","smangsmongVal"',
+          '"export-data-2-verified","c","abc125",1580688000000,,,,,,,"bazVal",,',
+          '"export-data-2-not-verified","c","abc125",1580688000000,,,,,,,"bazVal",,',
+        ];
+        expectRows(expected, rows);
+      });
+
+      it('should only export invalid reports on false', async () => {
+        const url = '/api/v2/export/reports?filters[valid]=false';
+
+        const result = await utils.request(url, { notJson: true });
+        const rows = getRows(result);
+        const expected = [
+           
+          // eslint-disable-next-line @stylistic/max-len
+          '_id,form,patient_id,reported_date,from,contact.name,contact.parent.name,contact.parent.parent.name,contact.parent.parent.parent.name,bar,baz,foo,smang.smong',
+          '"export-data-2-invalid","c","abc125",1580688000000,,,,,,,"bazVal",,',
+        ];
+        expectRows(expected, rows);
+      });
+    });
+  });
+
+  describe('GET|POST /api/v2/export/contacts', () => {
+    const contacts = [
+      { _id: 'john_id', name: 'john', patient_id: '12345', type: 'person', field: 'value' },
+      { _id: 'mary_id', name: 'mary', type: 'person', other_field: 'b' },
+      { _id: 'jen_id', name: 'jen', type: 'contact', contact_type: 'chw', patient_id: '123', other_field: 'value' },
+      { _id: 'leslie_id',
+        name: 'leslie', type: CONTACT_TYPES.DISTRICT_HOSPITAL, reported_date: 100 },
+      { _id: 'my_district_id',
+        name: 'my_district', type: CONTACT_TYPES.DISTRICT_HOSPITAL, place_id: '4568', phone: '0054852' },
+      { _id: 'ny_id', name: 'new york', type: 'contact', contact_type: 'city', place_id: '231', phone: '0054852' },
+      {
+        _id: 'michael_id',
+        name: 'michael',
+        type: 'contact',
+        contact_type: 'chw',
+        patient_id: '8894',
+        birthdate: '01-01-2023',
+      },
+    ];
+
+    const otherDocs = [
+      { _id: uuid(), type: DOC_TYPES.DATA_RECORD, form: 'a-form', fields: {} },
+      { _id: uuid(), type: 'task' },
+      { _id: uuid(), type: 'target' },
+    ];
+
+    before(async () => {
+      await utils.saveDocsRevs(contacts);
+      await utils.saveDocs(otherDocs);
+    });
+
+    it('Returns all contacts that exist in the system', async () => {
+      const result = await utils.request({ path: '/api/v2/export/contacts' });
+      const rows = getRows(result);
+      const hardCodedPerson = await utils.getDoc('e2e_contact_test_id');
+      const expected = [
+        'id,rev,name,patient_id,type,contact_type,place_id',
+        `"john_id","${contacts[0]._rev}","john","12345","person",,`,
+        `"mary_id","${contacts[1]._rev}","mary",,"person",,`,
+        `"jen_id","${contacts[2]._rev}","jen","123","contact","chw",`,
+        `"leslie_id","${contacts[3]._rev}","leslie",,"district_hospital",,`,
+        `"my_district_id","${contacts[4]._rev}","my_district",,"district_hospital",,"4568"`,
+        `"ny_id","${contacts[5]._rev}","new york",,"contact","city","231"`,
+        `"michael_id","${contacts[6]._rev}","michael","8894","contact","chw",`,
+        `"${hardCodedPerson._id}","${hardCodedPerson._rev}",,,"person",,`
+      ];
+      expectRows(expected, rows);
+    });
+
+    it('POST Filters by one contact type', async () => {
+      const result = await utils.request({
+        method: 'POST',
+        path: '/api/v2/export/contacts',
+        body: {
+          filters: {
+            types: {
+              selected: ['district_hospital']
+            }
+          }
+        }
+      });
+      const rows = getRows(result);
+      const expected = [
+        'id,rev,name,patient_id,type,contact_type,place_id',
+        `"leslie_id","${contacts[3]._rev}","leslie",,"district_hospital",,`,
+        `"my_district_id","${contacts[4]._rev}","my_district",,"district_hospital",,"4568"`,
+      ];
+      expectRows(expected, rows);
+    });
+
+    it('POST Filters by custom contact types', async () => {
+      const result = await utils.request({
+        method: 'POST',
+        path: '/api/v2/export/contacts',
+        body: {
+          filters: {
+            types: {
+              selected: ['chw', 'city']
+            }
+          }
+        }
+      });
+      const rows = getRows(result);
+      const expected = [
+        'id,rev,name,patient_id,type,contact_type,place_id',
+        `"jen_id","${contacts[2]._rev}","jen","123","contact","chw",`,
+        `"ny_id","${contacts[5]._rev}","new york",,"contact","city","231"`,
+        `"michael_id","${contacts[6]._rev}","michael","8894","contact","chw",`,
+      ];
+      expectRows(expected, rows);
+    });
+
+    it('POST filters by freetext', async () => {
+      const result = await utils.request({
+        method: 'POST',
+        path: '/api/v2/export/contacts',
+        body: {
+          filters: {
+            search: 'value'
+          }
+        }
+      });
+      const rows = getRows(result);
+      const expected = [
+        'id,rev,name,patient_id,type,contact_type,place_id',
+        `"jen_id","${contacts[2]._rev}","jen","123","contact","chw",`,
+        `"john_id","${contacts[0]._rev}","john","12345","person",,`,
+      ];
+      expectRows(expected, rows);
+    });
+
+    it('POST filters by freetext and type', async () => {
+      const result = await utils.request({
+        method: 'POST',
+        path: '/api/v2/export/contacts',
+        body: {
+          filters: {
+            search: 'value',
+            types: { selected: ['person', 'city', 'district_hospital'] }
+          }
+        }
+      });
+      const rows = getRows(result);
+      const expected = [
+        'id,rev,name,patient_id,type,contact_type,place_id',
+        `"john_id","${contacts[0]._rev}","john","12345","person",,`,
+      ];
+      expectRows(expected, rows);
+    });
+  });
+
+  describe('GET|POST /api/v2/export/user-devices', () => {
+    const createTelemetryDoc = ({
+      date,
+      deviceId,
+      user,
+      browser,
+      apk,
+      android,
+      cht,
+      settings,
+      storage
+    }) => {
+      const [year, month, day] = date.split('-');
+      const getUserAgent = () => {
+        if (!browser.name) {
+          return undefined;
+        }
+        const platform = browser.name === 'Firefox'
+          ? `Gecko/20100101 Firefox/${browser.version}`
+          : `AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${browser.version} Safari/537.36`;
+        return `Mozilla/5.0 (X11; Linux x86_64) ${platform}`;
+      };
+      return {
+        _id: `telemetry-${date}-${user}-${deviceId}`,
+        type: 'telemetry',
+        metadata: {
+          year,
+          month,
+          day,
+          user,
+          deviceId,
+          versions: {
+            app: cht,
+            settings
+          }
+        },
+        device: {
+          userAgent: getUserAgent(),
+          deviceInfo: {
+            app: {
+              version: apk
+            },
+            software: {
+              androidVersion: android
+            },
+            // Optional storage information
+            ...(storage ? { storage: { free: storage.free, total: storage.total } } : {})
+          }
+        }
+      };
+    };
+
+    const otherDocs = [
+      {
+        _id: `telemetry-2012-12-12-harambe-microsoft_kin`,
+        type: 'faketelemetry',
+        metadata: {
+          year: 2012,
+          month: 12,
+          day: 12,
+          user: 'harambe',
+          deviceId: 'microsoft_kin',
+        },
+        device: {
+          userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/47.0'
+        }
+      },
+      { _id: uuid(), type: 'feedback', form: 'a-form', fields: {} },
+      { _id: uuid(), type: 'telemetry' },
+      {
+        _id: `telemetry-2012-11-00-harambe-microsoft_kin`,
+        type: 'telemetry',
+        metadata: {
+          year: 2011,
+          month: 11,
+          day: undefined,
+          user: 'harambe',
+        },
+      },
+    ];
+
+    const deleteAllUsersMetaDocs = async () => {
+      const getResults = await utils.request({
+        path: '/medic-test-users-meta/_all_docs',
+        method: 'GET'
+      });
+      const docs = getResults.rows
+        .filter(row => !row.id.startsWith('_design'))
+        .map(row => ({ _id: row.id, _rev: row.value.rev, _deleted: true }));
+      const postResults = await utils.request({
+        path: '/medic-test-users-meta/_bulk_docs',
+        method: 'POST',
+        body: { docs }
+      });
+      if (postResults.find(r => !r.ok)) {
+        throw Error(JSON.stringify(postResults, null, 2));
+      }
+    };
+
+    const saveUsersMetaDocs = async (docs) => {
+      const results = await utils.request({
+        path: '/medic-test-users-meta/_bulk_docs',
+        method: 'POST',
+        body: { docs }
+      });
+      if (results.find(r => !r.ok)) {
+        throw Error(JSON.stringify(results, null, 2));
+      }
+      return results;
+    };
+
+    before(async () => {
+      await deleteAllUsersMetaDocs();
+    });
+
+    afterEach(async () => {
+      await deleteAllUsersMetaDocs();
+    });
+
+    it('Returns device data for all users', async () => {
+      const expectedData = [
+        {
+          user: 'max_data',
+          deviceId: uuid(),
+          date: '2011-11-11',
+          browser: {
+            name: 'Firefox',
+            version: '47.0',
+          },
+          apk: 'v1.0.1',
+          android: '5.1',
+          cht: `4.6.0`,
+          settings: uuid()
+        },
+        {
+          user: 'min_data',
+          deviceId: uuid(),
+          date: '2011-11-11',
+          browser: {}
+        }
+      ];
+      await saveUsersMetaDocs([...otherDocs, ...expectedData.map(createTelemetryDoc)]);
+
+      const result = await utils.request({ path: '/api/v2/export/user-devices' });
+
+      expect(result).to.deep.equal(expectedData);
+    });
+
+    it('Only returns latest data for each user device', async () => {
+      const userData0 = {
+        user: 'chw1',
+        deviceId: 'my_device',
+        date: '1969-12-12',
+        browser: {
+          name: 'Firefox',
+          version: '47.0',
+        },
+      };
+      const userData1 = {
+        user: 'chw1',
+        deviceId: 'my_device',
+        date: '2011-11-10',
+        browser: {
+          name: 'Firefox',
+          version: '48.0',
+        },
+      };
+      const userDataLatest = {
+        user: 'chw1',
+        deviceId: 'my_device',
+        date: '2011-11-11',
+        browser: {
+          name: 'Chrome',
+          version: '121.0.6167.184',
+        },
+      };
+      const userDataDifferentDevice = {
+        user: 'chw1',
+        deviceId: 'different_device',
+        date: '2012-12-12',
+        browser: {
+          name: 'Firefox',
+          version: '122.0.1',
+        },
+      };
+      await saveUsersMetaDocs([userData0, userData1, userDataLatest, userDataDifferentDevice].map(createTelemetryDoc));
+
+      const result = await utils.request({ path: '/api/v2/export/user-devices' });
+
+      expect(result).to.deep.equal([userDataDifferentDevice, userDataLatest]);
+    });
+
+    it('Includes storage fields only when present', async () => {
+      const withStorage = {
+        user: 'with_storage',
+        deviceId: 'aaa-device',
+        date: '2013-03-03',
+        browser: {},
+        storage: { free: 1024, total: 2048 },
+      };
+      const withoutStorage = {
+        user: 'without_storage',
+        deviceId: 'bbb-device',
+        date: '2013-03-03',
+        browser: {},
+      };
+      await saveUsersMetaDocs([withStorage, withoutStorage].map(createTelemetryDoc));
+
+      const result = await utils.request({ path: '/api/v2/export/user-devices' });
+
+      expect(result).to.deep.equal([
+        {
+          user: 'with_storage',
+          deviceId: 'aaa-device',
+          date: '2013-03-03',
+          browser: {},
+          storageFree: 1024,
+          storageTotal: 2048,
+        },
+        {
+          user: 'without_storage',
+          deviceId: 'bbb-device',
+          date: '2013-03-03',
+          browser: {},
+        },
+      ]);
+    });
+
+    it('Picks latest storage per device', async () => {
+      const older = {
+        user: 'chw2',
+        deviceId: 'device-x',
+        date: '2011-11-10',
+        browser: {},
+        storage: { free: 1000, total: 2000 },
+      };
+      const latest = {
+        user: 'chw2',
+        deviceId: 'device-x',
+        date: '2011-11-11',
+        browser: {},
+        storage: { free: 3000, total: 4000 },
+      };
+      const otherDevice = {
+        user: 'chw2',
+        deviceId: 'device-a',
+        date: '2011-11-11',
+        browser: {},
+        storage: { free: 1, total: 2 },
+      };
+      await saveUsersMetaDocs([older, latest, otherDevice].map(createTelemetryDoc));
+
+      const result = await utils.request({ path: '/api/v2/export/user-devices' });
+
+      // Expect order by [user, deviceId] => device-a then device-x
+      expect(result).to.deep.equal([
+        {
+          user: 'chw2',
+          deviceId: 'device-a',
+          date: '2011-11-11',
+          browser: {},
+          storageFree: 1,
+          storageTotal: 2,
+        },
+        {
+          user: 'chw2',
+          deviceId: 'device-x',
+          date: '2011-11-11',
+          browser: {},
+          storageFree: 3000,
+          storageTotal: 4000,
+        },
+      ]);
+    });
+  });
+
+  describe('Weird data', () => {
+    before(() => utils.saveDoc({
+      _id: 'export-data-2-test-doc-4',
+      form: 'weird-data-types',
+      type: DOC_TYPES.DATA_RECORD,
+      fields: {
+        wd_array: [0, 1, 2],
+        wd_emptyString: '',
+        wd_false: false,
+        wd_naughtyArray: [0, {foo: false, bar: null}, 'Hello, "world"'],
+        wd_naughtyString: 'Woah there, "Jimmy O\'Tool"',
+        wd_null: null,
+        wd_zero: 0,
+      }
+    }));
+
+    it('Outputs weird data types correctly', () => {
+      return utils.request({
+        method: 'POST',
+        path: '/api/v2/export/reports',
+        body: {
+          filters: {
+            forms: {
+              selected: [{code: 'weird-data-types'}]
+            }
+          }
+        }}).then(result => {
+        const rows = result.split('\n');
+        rows.pop(); // Last row is empty string, discard
+        //
+        // NB: if you have to debug this test failing, note that the test
+        // runner will not output the escaped string values correctly to the
+        // console. You can rely on its output to debug the problem.
+        //
+        const expected = [
+          // eslint-disable-next-line @stylistic/max-len
+          '_id,form,patient_id,reported_date,from,contact.name,contact.parent.name,contact.parent.parent.name,contact.parent.parent.parent.name,wd_array,wd_emptyString,wd_false,wd_naughtyArray,wd_naughtyString,wd_null,wd_zero',
+          // eslint-disable-next-line @stylistic/max-len
+          '"export-data-2-test-doc-4","weird-data-types",,"",,,,,,"[0,1,2]","",false,"[0,{\\"foo\\":false,\\"bar\\":null},\\"Hello, \\\\"world\\\\"\\"]","Woah there, \\"Jimmy O\'Tool\\"",,0',
+        ];
+        expect(rows.length).to.equal(2);
+        expect(rows).to.deep.equal(expected);
+      });
+    });
+  });
+});

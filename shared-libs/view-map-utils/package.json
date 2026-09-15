@@ -1,0 +1,11 @@
+{
+  "name": "@medic/view-map-utils",
+  "version": "1.0.0",
+  "description": "Provides helper to access ddoc view map functions in API and SENTINEL",
+  "main": "src/view-map-utils.js",
+  "scripts": {
+    "test": "nyc --nycrcPath='../nyc.config.js' mocha ./test"
+  },
+  "author": "",
+  "license": "Apache-2.0"
+}

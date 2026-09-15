@@ -1,0 +1,165 @@
+const { formTitle } = require('@page-objects/default/enketo/generic-form.wdio.page');
+
+const currentSection =  () => $('section[class*="current"]');
+
+const divContainer = () => $('div.container');
+
+const getCurrentPageSection = async () => (await currentSection().isExisting()) ? currentSection() : divContainer();
+
+const enabledFieldset = (section) => section.$$('fieldset.or-branch:not(.disabled)');
+
+const addRepeatSectionButton = (title) => {
+  if (!title) {
+    return $(`button.add-repeat-btn`);
+  }
+  return $(`//section[h4//span[normalize-space(text())="${title}"]]//button[contains(@class, "add-repeat-btn")]`);
+};
+
+const radioButtonElement = async (question, value) => {
+  return (await getCurrentPageSection())
+    .$(`legend*=${question}`)
+    .parentElement()
+    .$(`label*=${value}`);
+};
+
+const getCorrectFieldsetSection = async (section) => {
+  const countFieldset = await enabledFieldset(section).length;
+  if (countFieldset){
+    return await enabledFieldset(section)[countFieldset-1];
+  }
+  return section;
+};
+
+const isElementDisplayed = async (type, text) => {
+  return (await getCurrentPageSection()).$(`${type}*=${text}`).isDisplayed();
+};
+
+const selectRadioButton = async (question, value) => {
+  await (await radioButtonElement(question, value)).click();
+};
+
+const selectCheckBox = async (question, value) => {
+  const page = await getCurrentPageSection();
+  await (await getCorrectFieldsetSection(page))
+    .$(`legend*=${question}`)
+    .nextElement()
+    .$(`label*=${value}`)
+    .click();
+};
+
+const setValue = async (typeSelector, question, value, { repeatIndex = 0 } = {}) => {
+  await (await getCurrentPageSection())
+    .$$(`label*=${question}`)[repeatIndex]
+    .$(typeSelector).setValue(value);
+};
+
+const setInputValue = async (question, value, options) => {
+  await setValue('input', question, value, options);
+};
+
+const setDateValue = async (question, value, options) => {
+  await setValue('input.ignore.input-small', question, value, options);
+  //To close the date widget
+  await formTitle().click();
+};
+
+const setTextareaValue = async (question, value, options) => {
+  await setValue('textarea', question, value, options);
+};
+
+const addFileInputValue = async (question, value, { repeatIndex = 0 } = {}) => {
+  await (await getCurrentPageSection())
+    .$$(`label*=${question}`)[repeatIndex]
+    .$('input[type=file]')
+    .addValue(value);
+};
+
+const validateSummaryReport = async (textArray) => {
+  for (const text of textArray) {
+    expect(
+      await (await getCurrentPageSection()).$(`span*=${text}`).isDisplayed()
+    ).to.equal(true, `${text} not found in summary report`);
+  }
+};
+
+const getValue = async (typeSelector, question, { repeatIndex = 0 } = {}) => {
+  return await (await getCurrentPageSection())
+    .$$(`label*=${question}`)[repeatIndex]
+    .$(typeSelector)
+    .getValue();
+};
+
+const getInputValue = async (question, options) => {
+  return await getValue('input', question, options);
+};
+
+const getTextareaValue = async (question, options) => {
+  return await getValue('textarea', question, options);
+};
+
+const scrollToQuestion = async (label) => {
+  return await (await getCurrentPageSection())
+    .$(`label*=${label}`)
+    .scrollIntoView(false);
+};
+
+const isRequiredMessageDisplayed = async (question) => {
+  await formTitle().click();
+  return (await getCurrentPageSection())
+    .$(`label*=${question}`)
+    .$('.or-required-msg.active')
+    .isDisplayed();
+};
+
+const isConstraintMessageDisplayed = async (question) => {
+  await formTitle().click();
+  return (await getCurrentPageSection())
+    .$(`label*=${question}`)
+    .$('.or-constraint-msg.active')
+    .isDisplayed();
+};
+
+const addRepeatSection = async (title) => {
+  await addRepeatSectionButton(title).click();
+};
+
+const drawShapeOnCanvas = async (question) => {
+  const canvas = await (await getCurrentPageSection())
+    .$(`label*=${question}`)
+    .$('canvas');
+  await canvas.waitForDisplayed();
+  await browser.action('pointer')
+    .move({ origin: canvas })
+    .down()
+    .move({ origin: canvas, x: 50, y: 0 })
+    .move({ origin: canvas, x: 50, y: 50 })
+    .move({ origin: canvas, x: 0, y: 50 })
+    .move({ origin: canvas, x: 0, y: 0 })
+    .move({ origin: canvas, x: 50, y: 0 })
+    .up()
+    .perform();
+};
+
+const isRadioButtonSelected = async (question, value) => {
+  return await (await radioButtonElement(question, value)).getAttribute('data-checked');
+};
+
+module.exports = {
+  getCurrentPageSection,
+  isElementDisplayed,
+  selectRadioButton,
+  selectCheckBox,
+  setInputValue,
+  setDateValue,
+  setTextareaValue,
+  addFileInputValue,
+  validateSummaryReport,
+  getInputValue,
+  getTextareaValue,
+  isRequiredMessageDisplayed,
+  isConstraintMessageDisplayed,
+  addRepeatSection,
+  drawShapeOnCanvas,
+  isRadioButtonSelected,
+  scrollToQuestion,
+};

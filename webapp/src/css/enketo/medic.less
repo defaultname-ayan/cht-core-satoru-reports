@@ -1,0 +1,650 @@
+@import "../variables";
+
+@input-height: 45px;
+
+@keyframes geolocation-fill {
+  from { width: 25%; }
+  to { width: 100%; }
+}
+
+/**
+ * Some of the widths set up in the enketo.css file assume the form is being
+ * viewed full-screen.  These overrides are required when enketo is embedded in
+ * a modal dialog.
+ */
+.enketo {
+  @import "../../../../api/build/static/webapp/enketo.less";
+}
+
+.enketo {
+  position: relative;
+
+  form {
+    #form-languages {
+      display: none;
+    }
+
+    .dropdown-menu .option-wrapper {
+      padding: 3px;
+      .option-label {
+        width: calc(100% - 34px);
+      }
+    }
+
+    .question:not(.or-appearance-likert):not(.or-appearance-columns):not(.or-appearance-list-nolabel) .option-wrapper {
+      .option-label.active {
+        white-space: normal;
+        word-break: break-word;
+        margin: 0;
+        display: inline;
+      }
+    }
+
+    .question.non-select .question-label ul li {
+      list-style: inside;
+      padding-left: 2px;
+    }
+  }
+
+  #form-title {
+    border-bottom: 1px solid @separator-color;
+  }
+  h2 {
+    font-size: @font-XXL;
+  }
+  h3 {
+    font-size: @font-extra-large;
+  }
+  h4 {
+    font-size: @font-large;
+  }
+
+  .or-repeat .remove {
+    display: inline-block;
+  }
+  .btn-primary {
+    background-color: @button-color;
+  }
+  .btn-icon-only:not(.draw-widget__undo) {
+    padding: 0;
+    width: inherit;
+  }
+  .icon:not(.draw-widget__undo .icon-undo) {
+    position: relative;
+    top: 1px;
+  }
+  // Hide download button for draw widget
+  .draw-widget__footer .btn-download {
+    display: none;
+  }
+  .or-group {
+    margin: 15px 0 0 0;
+  }
+  .or-group > h4{
+    margin: 0;
+    &::before {
+      display: none;
+    }
+  }
+  .or {
+    h2,
+    h3,
+    h4 {
+      padding: 15px 20px;
+      text-align: left;
+    }
+    .question-label {
+      display: inline;
+    }
+  }
+  // nested group
+  .or-group .or-group {
+    margin: 0;
+    > h4 {
+      color: inherit;
+      font-weight: normal;
+      padding-bottom: 5px;
+      .active {
+        font-size: @font-large;
+      }
+    }
+  }
+
+  .or-group > h4::before {
+    // hide the chevrons
+    display: none !important;
+  }
+
+  .or > h3 {
+    color: inherit;
+    padding-top: 20px;
+    padding-bottom: 20px;
+  }
+  .question-label {
+    font-size: @font-large;
+  }
+  label,
+  legend,
+  .btn,
+  .or-required-msg.active,
+  .or-constraint-msg.active,
+  .or-hint.active,
+  input[type=text],
+  input[type=password],
+  input[type=url],
+  input[type=email],
+  input[type=file],
+  input[type=date],
+  input[type=time],
+  input[type=datetime],
+  input[type=number],
+  select,
+  textarea,
+  input[type="tel"] {
+    font-size: inherit;
+    line-height: inherit;
+  }
+  legend {
+    color: @text-normal-color;
+    > span {
+      vertical-align: inherit;
+    }
+  }
+  .required-subtle {
+    font-size: @font-small;
+  }
+  .form-footer {
+    margin: 0;
+    margin-bottom: 10px;
+    padding: 0 20px;
+    text-align: right;
+    .previous-page::before {
+      content: "< ";
+    }
+    .next-page::after {
+      content: " >";
+    }
+    .btn.cancel {
+      display: inline-block;
+      float: left;
+    }
+  }
+  label,
+  .question {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+  .container {
+    padding: 0;
+  }
+  .container,
+  .form-footer {
+    width: 100%;
+  }
+  .or-appearance-hidden {
+    display: none !important;
+  }
+  .question {
+    input[type="text"],
+    input[type="password"],
+    input[type="url"],
+    input[type="email"],
+    input[type="file"],
+    textarea {
+      width: 100%;
+    }
+    .timepicker input[type="text"] {
+      width: 180px;
+    }
+  }
+  .required {
+    color: inherit;
+    position: inherit;
+    top: inherit;
+    left: 5px;
+  }
+  .question {
+    margin: 0;
+    padding-top: 15px;
+    padding-bottom: 15px;
+    .geopicker input {
+      width: 80%;
+    }
+    input[type="tel"] {
+      /* inherit all standard TEXT input styles */
+      &:extend(.enketo .question input[type="text"]);
+    }
+    input[type=radio],
+    input[type=checkbox] {
+      height: 24px;
+      width: 24px;
+      margin-top: -2px;
+    }
+    input[type=radio] {
+      border-radius: 50%;
+    }
+    input[type=checkbox]:checked {
+      background-position: -1px;
+    }
+    .date input[type=text] {
+      width: 180px;
+    }
+  }
+  input[type="tel"] {
+    /* inherit all standard TEXT input styles */
+    &:extend(.enketo input[type="text"]);
+  }
+  .readonly {
+    font-weight: normal;
+  }
+  .invalid-constraint,
+  .invalid-required {
+    margin: 0;
+    padding-left: 20px;
+    padding-right: 20px;
+    border-radius: 0;
+  }
+  .or-required-msg.active,
+  .or-constraint-msg.active {
+    padding-top: 0;
+  }
+
+  .horizontal-options a.icon {
+    width: inherit;
+  }
+  em {
+    font-style: italic;
+  }
+  .or-appearance-countdown-timer {
+    input, .option-wrapper {
+      display: none;
+    }
+    canvas {
+      width: 100%;
+      max-width: 320px;
+      display: block;
+    }
+  }
+  .or-appearance-mrdt-verify {
+    .mrdt-verify {
+      display: inline-block;
+    }
+    .mrdt-verify,
+    .mrdt-preview {
+      margin: 8px 0;
+    }
+    input,
+    textarea {
+      display: none;
+    }
+  }
+
+  .or-appearance-android-app-launcher {
+    .android-app-launcher-actions {
+      margin: 0;
+      padding: 15px 20px;
+    }
+  }
+
+  .or-appearance-geolocation-capture {
+    .geolocation-permission-denied,
+    .geolocation-unavailable {
+      display: block;
+      margin: 8px 0;
+    }
+
+    .geolocation-context-options {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 8px 0;
+
+      .geolocation-context-option {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-left: 0;
+        cursor: pointer;
+        font-weight: normal;
+      }
+    }
+
+    .geolocation-edit-choices {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 8px 0;
+
+      .geolocation-edit-option {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-left: 0;
+        cursor: pointer;
+        font-weight: normal;
+
+        &:has(input:disabled) {
+          opacity: 0.4;
+          cursor: not-allowed;
+          pointer-events: none;
+        }
+      }
+    }
+
+    .geolocation-edit-badge {
+      margin: 8px 0;
+    }
+
+    .geolocation-status {
+      margin: 8px 0;
+
+      .geolocation-progress-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 10px;
+
+        .geolocation-progress-label {
+          font-weight: bold;
+          white-space: nowrap;
+        }
+
+        .geolocation-progress-bar {
+          flex: 1;
+          max-width: 200px;
+          height: 12px;
+          background-color: @gray-light;
+          border-radius: 6px;
+          overflow: hidden;
+
+          &::after {
+            content: '';
+            display: block;
+            height: 100%;
+            width: 0;
+            background-color: @success-state-color;
+            border-radius: 6px;
+            animation: geolocation-fill 30s linear forwards;
+            transition: width 0.5s ease-out, background-color 0.3s ease;
+          }
+        }
+      }
+
+      .geolocation-result-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+
+        .alert-success {
+          color: @success-state-color;
+          padding: 0;
+          border: none;
+          background-color: transparent;
+        }
+
+        .alert-error {
+          color: @failed-state-color;
+          padding: 0;
+          border: none;
+          background-color: transparent;
+        }
+      }
+
+      .geolocation-retry-btn {
+        .fa {
+          padding-right: 10px;
+          padding-left: 10px;
+        }
+      }
+    }
+
+    .geolocation-save-without-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 12px 0 0 0;
+      padding: 8px 4px;
+      border-radius: @radius-size-small;
+      cursor: pointer;
+      font-weight: normal;
+
+      &[data-checked=true] {
+        background-color: @blue-highlight;
+      }
+    }
+
+    .geolocation-save-without-checkbox {
+      flex-shrink: 0;
+    }
+  }
+
+  .option-wrapper > label:not(.filler) {
+    margin: 0;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    border-radius: @radius-size-small;
+  }
+  button[disabled] {
+    .icon-plus,
+    .icon-minus {
+      opacity: 0.2;
+    }
+  }
+  .or-appearance-allow-new .add-new {
+    padding-top: 3px;
+  }
+
+  input:not([type="radio"]):not([type="checkbox"]),
+  select,
+  textarea {
+    height: @input-height;
+  }
+
+  .or-appearance-summary {
+    @red: #e00900;
+    @green: #75b2b2;
+    @blue: #6b9acd;
+    @yellow: #e2b100;
+    @lime: #b5bd21;
+
+    .or-appearance-center {
+      text-align: center;
+    }
+
+    label .question-label {
+      display: inline;
+    }
+
+    .or-appearance-h1:not(.disabled) {
+      padding: 5px;
+      padding-left: 2.5rem;
+      text-align: center;
+      font-weight: bold;
+      margin-top: 20px;
+
+      &.or-appearance-red {
+        background-color: @red;
+        color: #fff;
+      }
+      &.or-appearance-green {
+        background-color: @green;
+        color: #fff;
+      }
+      &.or-appearance-blue {
+        background-color: @blue;
+        color: #fff;
+      }
+      &.or-appearance-yellow {
+        background-color: @yellow;
+        color: #fff;
+      }
+      &.or-appearance-lime {
+        background-color: @lime;
+        color: #fff;
+      }
+      i.fa {
+        position: absolute;
+        left: 0;
+        top: 0;
+        margin: 10px;
+      }
+      .question-label {
+        font-size: @font-XXL;
+      }
+    }
+    .or-appearance-h2 {
+      padding: 5px 0 5px;
+      margin: 0 10px;
+      text-align: center;
+      font-weight: bold;
+
+      &.or-appearance-red {
+        border-bottom: 2px solid @red;
+        color: @red;
+      }
+      &.or-appearance-green {
+        border-bottom: 2px solid @green;
+        color: @green;
+      }
+      &.or-appearance-blue {
+        border-bottom: 2px solid @blue;
+        color: @blue;
+      }
+      &.or-appearance-yellow {
+        border-bottom: 2px solid @yellow;
+        color: @yellow;
+      }
+      &.or-appearance-lime {
+        border-bottom: 2px solid @lime;
+        color: @lime;
+      }
+      .question-label {
+        font-size: @font-extra-large;
+      }
+    }
+    .or-appearance-h3 {
+      font-weight:bold;
+
+      &.or-appearance-red {
+        margin: 0 20px;
+        border-bottom: 1px solid #ccc;
+        color: @red;
+      }
+      &.or-appearance-green {
+        margin: 0 20px;
+        border-bottom: 1px solid #ccc;
+        color: @green;
+      }
+      &.or-appearance-blue {
+        margin: 0 20px;
+        border-bottom: 1px solid #ccc;
+        color: @blue;
+      }
+      &.or-appearance-yellow {
+        margin: 0 20px;
+        border-bottom: 1px solid #ccc;
+        color: @yellow;
+      }
+      &.or-appearance-lime {
+        margin: 0 20px;
+        border-bottom: 1px solid #ccc;
+        color: @lime;
+      }
+    }
+    .or-appearance-li:not(.disabled) {
+      margin: 0 20px;
+      padding-top: 3px;
+      padding-bottom: 3px;
+      &:nth-child(1) {
+        padding-top: 7px;
+      }
+      br {
+        display: none;
+      }
+      &:before {
+        content: '»';
+        position: absolute;
+        left: 0;
+      }
+    }
+  }
+  .select2-container .select2-selection--single {
+    height: @input-height;
+  }
+  .select2-container--default .select2-selection--single .select2-selection__rendered {
+    line-height: @input-height;
+  }
+  .select2-container--default .select2-selection--single .select2-selection__arrow {
+    height: 39px;
+  }
+  .pages.or .or-repeat-info[role="page"] {
+    display: block;
+  }
+
+  #duplicate_contacts {
+    margin-bottom: 15px;
+    .results_header {
+      font-size: @font-large;
+      padding: 0;
+    }
+    .acknowledge_label {
+      -webkit-user-select: none; -ms-user-select: none; user-select: none;
+      margin: 15px 0 0 0;
+    }
+    mat-expansion-panel {
+      mat-expansion-panel-header {
+        height: auto;
+        .mat-content {
+          font-size: @font-large;
+          display: flex;
+          flex-direction: column;
+          padding: 0.5em 0;
+        }
+        .mat-expansion-indicator::after {
+          border-width: 0 3px 3px 0;
+          padding: 4px;
+          color: @text-normal-color;
+        }
+      }
+      .nested-section {
+        font-size: @font-medium;
+        justify-content: center;
+        display: flex;
+        .loading-status {
+          margin: 0;
+        }
+      }
+      mat-action-row {
+        font-size: @font-medium;
+      }
+    }
+  }
+}
+
+@media (max-width: @media-mobile) {
+  .enketo {
+    #form-title {
+      display: none;
+    }
+    .option-wrapper > label:not(.filler) {
+      padding-top: 9px;
+      padding-bottom: 9px;
+
+      &:hover {
+        background-color: inherit;
+      }
+      &[data-checked=true] {
+        background-color: @enketo-hover-color;
+      }
+    }
+    .form-footer {
+      .btn.btn-link.cancel {
+        display: none;
+      }
+      .previous-page {
+        float: left;
+      }
+    }
+  }
+}

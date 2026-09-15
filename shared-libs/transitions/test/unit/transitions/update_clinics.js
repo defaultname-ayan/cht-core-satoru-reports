@@ -1,0 +1,576 @@
+const sinon = require('sinon');
+const assert = require('chai').assert;
+const { Person, Qualifier } = require('@medic/cht-datasource');
+const db = require('../../../src/db');
+const config = require('../../../src/config');
+const dataContext = require('../../../src/data-context');
+const utils = require('../../../src/lib/utils');
+const { CONTACT_TYPES, DOC_TYPES } = require('@medic/constants');
+const phone = '+34567890123';
+
+let transition;
+let getContactWithLineage;
+
+describe('update clinic', () => {
+  beforeEach(() => {
+    config.init({
+      getAll: sinon.stub().returns({}),
+      get: sinon.stub(),
+      getTranslations: sinon.stub().returns({})
+    });
+    transition = require('../../../src/transitions/update_clinics');
+    dataContext.init({ bind: sinon.stub() });
+    getContactWithLineage = sinon.stub();
+    dataContext.init({
+      bind: sinon.stub().returns(getContactWithLineage),
+    });
+  });
+
+  afterEach(() => {
+    sinon.reset();
+    sinon.restore();
+  });
+
+  it('filter includes docs with no clinic', () => {
+    const doc = {
+      type: DOC_TYPES.DATA_RECORD,
+      from: phone,
+    };
+    assert(transition.filter({ doc, info: {} }));
+  });
+
+  it('filter out docs which already have a clinic', () => {
+    const doc = {
+      from: phone,
+      type: DOC_TYPES.DATA_RECORD,
+      contact: {
+        parent: { name: 'some clinic' },
+      },
+    };
+    assert(!transition.filter({ doc }));
+  });
+
+  it('should not update clinic by phone', () => {
+    const doc = {
+      from: phone,
+      type: DOC_TYPES.DATA_RECORD,
+    };
+
+    const contact = {
+      _id: '9ed7d9c6095cc0e37e4d3e94d3387ed9',
+      _rev: '6-e447d8801d7bed36614af92449586851',
+      type: CONTACT_TYPES.CLINIC,
+      name: 'Clinic',
+      place_id: '1000',
+      contact: {
+        name: 'CCN',
+        phone: '+34567890123',
+      },
+      parent: {
+        _id: '9ed7d9c6095cc0e37e4d3e94d33866f1',
+        _rev: '6-723dad2083c951501a1851fb88b6e3b5',
+        type: CONTACT_TYPES.HEALTH_CENTER,
+        name: 'Health Center',
+        contact: {
+          name: 'HCCN',
+          phone: '+23456789012',
+        },
+        parent: {
+          _id: '9ed7d9c6095cc0e37e4d3e94d3384c8f',
+          _rev: '4-6e5f394413e840c1f41bf9f471a91e04',
+          type: CONTACT_TYPES.DISTRICT_HOSPITAL,
+          name: 'District',
+          parent: {},
+          contact: {
+            name: 'DCN',
+            phone: '+12345678901',
+          },
+        },
+      },
+    };
+
+    sinon.stub(db.medic, 'query').resolves({ rows: [{ id: contact._id }] });
+    getContactWithLineage.resolves(contact);
+
+    return transition.onMatch({ doc: doc }).then(changed => {
+      assert(changed);
+      assert(doc.contact);
+      assert(!doc.contact.phone);
+    });
+  });
+
+  it('should not update clinic with wrong phone', () => {
+    const doc = {
+      type: DOC_TYPES.DATA_RECORD,
+      from: 'WRONG',
+      content_type: 'xml'
+    };
+    sinon.stub(db.medic, 'query').resolves({ rows: [] });
+    return transition.onMatch({ doc: doc }).then(changed => {
+      assert(!changed);
+      assert(!doc.contact);
+    });
+  });
+
+  it('handles clinic ref id not found - medic/medic#2636', () => {
+    const doc = {
+      type: DOC_TYPES.DATA_RECORD,
+      from: '+12345',
+      refid: '1000',
+      content_type: 'xml'
+    };
+    sinon.stub(db.medic, 'query').resolves({ rows: [] });
+    return transition.onMatch({ doc: doc }).then(changed => {
+      assert(!changed);
+      assert(!doc.contact);
+    });
+  });
+
+  it('should update clinic by refid and fix number', () => {
+    const doc = {
+      type: DOC_TYPES.DATA_RECORD,
+      from: '+12345',
+      refid: '1000',
+    };
+
+    const contact = {
+      _id: '9ed7d9c6095cc0e37e4d3e94d3387ed9',
+      _rev: '6-e447d8801d7bed36614af92449586851',
+      type: CONTACT_TYPES.CLINIC,
+      name: 'Clinic',
+      place_id: '1000',
+      contact: {
+        name: 'CCN',
+        phone: '+34567890123',
+      },
+      parent: {
+        _id: '9ed7d9c6095cc0e37e4d3e94d33866f1',
+        _rev: '6-723dad2083c951501a1851fb88b6e3b5',
+        type: CONTACT_TYPES.HEALTH_CENTER,
+        name: 'Health Center',
+        contact: {
+          name: 'HCCN',
+          phone: '+23456789012',
+        },
+        parent: {
+          _id: '9ed7d9c6095cc0e37e4d3e94d3384c8f',
+          _rev: '4-6e5f394413e840c1f41bf9f471a91e04',
+          type: CONTACT_TYPES.DISTRICT_HOSPITAL,
+          name: 'District',
+          parent: {},
+          contact: {
+            name: 'DCN',
+            phone: '+12345678901',
+          },
+        },
+      },
+    };
+
+    config.getAll.returns({ contact_types: [ { id: 'clinic' } ] });
+    sinon.stub(db.medic, 'query').resolves({ rows: [{ doc: contact }] });
+    getContactWithLineage.returns(Promise.resolve(contact));
+    return transition.onMatch({ doc: doc }).then(changed => {
+      assert(changed);
+      assert(doc.contact);
+      assert.deepEqual(doc.contact, contact.contact);
+    });
+  });
+
+  it('should update clinic by refid and get latest contact', async () => {
+    const doc = {
+      from: '+12345',
+      refid: '1000',
+      type: DOC_TYPES.DATA_RECORD,
+    };
+    const clinic = {
+      _id: '9ed7d9c6095cc0e37e4d3e94d3387ed9',
+      _rev: '6-e447d8801d7bed36614af92449586851',
+      type: CONTACT_TYPES.CLINIC,
+      name: 'Clinic',
+      contact: {
+        _id: 'z',
+      },
+      parent: {
+        _id: '9ed7d9c6095cc0e37e4d3e94d33866f1',
+        _rev: '6-723dad2083c951501a1851fb88b6e3b5',
+        type: CONTACT_TYPES.HEALTH_CENTER,
+        name: 'Health Center',
+        contact: {
+          name: 'HCCN',
+          phone: '+23456789012',
+        },
+        parent: {
+          _id: '9ed7d9c6095cc0e37e4d3e94d3384c8f',
+          _rev: '4-6e5f394413e840c1f41bf9f471a91e04',
+          type: CONTACT_TYPES.DISTRICT_HOSPITAL,
+          name: 'District',
+          parent: {},
+          contact: {
+            name: 'DCN',
+            phone: '+12345678901',
+          },
+        },
+      },
+    };
+    const contact = {
+      _id: 'z',
+      _rev: '2',
+      name: 'zenith',
+      phone: '+12345',
+    };
+    config.getAll.returns({ contact_types: [ { id: 'clinic' } ] });
+    sinon.stub(db.medic, 'query').resolves({ rows: [{ doc: clinic }] });
+    const getPersonWithLineage = sinon
+      .stub()
+      .resolves(contact);
+    dataContext.bind.returns(getPersonWithLineage);
+
+    const changed = await transition.onMatch({ doc: doc });
+
+    assert(changed);
+    assert(doc.contact);
+    assert.equal(doc.contact._rev, '2');
+    assert.equal(doc.contact.name, 'zenith');
+    assert.isTrue(dataContext.bind.calledOnceWithExactly(Person.v1.getWithLineage));
+    assert.isTrue(getPersonWithLineage.calledOnceWithExactly(Qualifier.byUuid('z')));
+  });
+
+  /*
+   * Since the facilities index uses strings for the reference value we need to
+   * always query with strings too.
+   */
+  it('refid field is cast to a string in view query', () => {
+    const change = {
+      doc: {
+        refid: 123,
+        type: DOC_TYPES.DATA_RECORD,
+      },
+    };
+    const view = sinon.stub(db.medic, 'query').resolves({ rows: [] });
+    return transition.onMatch(change).then(() => {
+      assert.equal(view.args[0][1].key[0], 'external');
+      assert.equal(view.args[0][1].key[1], '123');
+    });
+  });
+
+  it('from field is cast to string in view query', () => {
+    const change = {
+      doc: {
+        from: 123,
+        type: DOC_TYPES.DATA_RECORD,
+      },
+    };
+    const view = sinon.stub(db.medic, 'query').resolves({ rows: [] });
+    return transition.onMatch(change).then(() => {
+      assert.equal(view.args[0][1].key, '123');
+    });
+  });
+
+  it('handles lineage rejection properly', () => {
+    const doc = {
+      from: '123',
+      type: DOC_TYPES.DATA_RECORD,
+    };
+
+    sinon.stub(db.medic, 'query').resolves({ rows: [{ id: 'someID' }] });
+    getContactWithLineage.withArgs('someID').rejects('some error');
+
+    return transition.onMatch({ doc: doc }).catch(err => {
+      assert.equal(err, 'some error');
+    });
+  });
+
+  it('should add sys.facility_not_found when no form', () => {
+    const doc = {
+      from: '123',
+      type: DOC_TYPES.DATA_RECORD,
+    };
+
+    sinon.stub(db.medic, 'query').resolves({ rows: [{ key: '123' }] });
+    return transition.onMatch({ doc }).then(changed => {
+      assert(changed);
+      assert(!doc.contact);
+      assert.equal(doc.errors.length, 1);
+      assert.equal(doc.errors[0].code, 'sys.facility_not_found');
+    });
+  });
+
+  it('should add sys.facility_not_found when form not found', () => {
+    const doc = {
+      from: '123',
+      type: DOC_TYPES.DATA_RECORD,
+      form: 'someForm'
+    };
+
+    sinon.stub(db.medic, 'query').resolves({ rows: [{ key: '123' }] });
+    config.get.withArgs('forms').returns({ 'other': {} });
+
+    return transition.onMatch({ doc }).then(changed => {
+      assert(changed);
+      assert(!doc.contact);
+      assert.equal(doc.errors.length, 1);
+      assert.equal(doc.errors[0].code, 'sys.facility_not_found');
+      assert.equal(config.get.withArgs('forms').callCount, 1);
+    });
+  });
+
+  it('should add sys.facility_not_found when form not public and translates message', () => {
+    const doc = {
+      from: '123',
+      type: DOC_TYPES.DATA_RECORD,
+      form: 'someForm'
+    };
+
+    sinon.stub(db.medic, 'query').resolves({ rows: [{ key: '123' }] });
+    const stubbedConfig = config.get;
+    stubbedConfig.returns([ {
+      form: 'someForm',
+      messages: [
+        {
+          event_type: 'sys.facility_not_found',
+          recipient: 'reporting_unit',
+          translation_key: 'sys.facility_not_found',
+        }
+      ],
+    }]);
+    stubbedConfig.withArgs('forms').returns({ 'someForm': {} });
+    sinon.stub(utils, 'translate').returns('translated');
+    sinon.stub(utils, 'getLocale').returns('locale');
+
+    return transition.onMatch({ doc }).then(changed => {
+      assert(changed);
+      assert(!doc.contact);
+      assert.equal(doc.errors.length, 1);
+      assert.deepEqual(doc.errors[0], {
+        code: 'sys.facility_not_found',
+        message: 'translated'
+      });
+      assert.equal(utils.translate.callCount, 2); // called by messages.addMessage and messages.getMessage
+      assert.deepEqual(utils.translate.args[0], ['sys.facility_not_found', 'locale']);
+      assert.deepEqual(utils.translate.args[1], ['sys.facility_not_found', 'en']); // defaults to en locale
+      assert.equal(doc.tasks.length, 1);
+      assert.equal(doc.tasks[0].messages[0].to, '123');
+      assert.equal(doc.tasks[0].messages[0].message, 'translated');
+    });
+  });
+
+  it('should send a message when form is not public', () => {
+    const doc = {
+      from: '123',
+      type: DOC_TYPES.DATA_RECORD,
+      form: 'someForm'
+    };
+
+    sinon.stub(db.medic, 'query').resolves({ rows: [{ key: '123' }] });
+    sinon.stub(utils, 'translate').returns('facility not found');
+    const stubbedConfig = config.get;
+    stubbedConfig.returns([ {
+      form: 'someForm',
+      messages: [
+        {
+          event_type: 'sys.facility_not_found',
+          recipient: 'reporting_unit',
+          translation_key: 'sys.facility_not_found_key',
+        }
+      ],
+    }]);
+    stubbedConfig.withArgs('forms').returns({ 'someForm': {} });
+    sinon.stub(utils, 'getLocale').returns('locale');
+
+    return transition.onMatch({ doc }).then(changed => {
+      assert(changed);
+      assert(!doc.contact);
+      assert.equal(doc.tasks.length, 1);
+      assert.equal(doc.tasks[0].messages[0].to, '123');
+      assert.equal(doc.tasks[0].messages[0].message, 'facility not found');
+      assert.equal(utils.translate.callCount, 2);
+      assert.deepEqual(utils.translate.args[0], ['sys.facility_not_found_key', 'locale']);
+      assert.deepEqual(utils.translate.args[1], ['sys.facility_not_found_key', 'en']);
+    });
+  });
+
+  it('should handle a non-public form with no config', () => {
+    const doc = {
+      from: '123',
+      type: DOC_TYPES.DATA_RECORD,
+      form: 'someForm'
+    };
+
+    sinon.stub(db.medic, 'query').resolves({ rows: [{ key: '123' }] });
+    config.get.withArgs('forms').returns({ 'someForm': {} });
+    sinon.stub(utils, 'translate').returns('facility not found');
+
+    return transition.onMatch({ doc }).then(changed => {
+      assert(changed);
+      assert(!doc.contact);
+      assert.equal(doc.errors.length, 1);
+      assert.equal(doc.errors[0].code, 'sys.facility_not_found');
+      assert.equal(doc.tasks.length, 1);
+      assert.equal(doc.tasks[0].messages[0].to, '123');
+      assert.equal(doc.tasks[0].messages[0].message, 'facility not found');
+      assert.equal(utils.translate.callCount, 2);
+      assert.deepEqual(utils.translate.args[0], ['messages.generic.sys.facility_not_found', 'en']);
+    });
+  });
+
+  it('should not send a message when form is not found', () => {
+    const doc = {
+      from: '123',
+      type: DOC_TYPES.DATA_RECORD,
+      form: 'someForm'
+    };
+
+    sinon.stub(db.medic, 'query').resolves({ rows: [{ key: '123' }] });
+    config.get.withArgs('forms').returns({ 'other': {} });
+
+    return transition.onMatch({ doc }).then(changed => {
+      assert(changed);
+      assert(!doc.contact);
+      assert.equal(doc.errors.length, 1);
+      assert.equal(doc.errors[0].code, 'sys.facility_not_found');
+      assert.notExists(doc.tasks);
+    });
+  });
+
+  it('should not add sys.facility_not_found when xml', () => {
+    const doc = {
+      from: '123',
+      type: DOC_TYPES.DATA_RECORD,
+      form: 'someForm',
+      content_type: 'xml'
+    };
+
+    sinon.stub(db.medic, 'query').resolves({ rows: [{ key: '123' }] });
+
+    return transition.onMatch({ doc }).then(changed => {
+      assert(!changed);
+      assert(!doc.contact);
+      assert(!doc.errors);
+    });
+  });
+
+  it('should not add sys.facility_not_found when form is public', () => {
+    const doc = {
+      from: '123',
+      type: DOC_TYPES.DATA_RECORD,
+      form: 'someForm',
+    };
+
+    sinon.stub(db.medic, 'query').resolves({ rows: [{ key: '123' }] });
+    config.get.withArgs('forms').returns({ 'someForm': { public_form: true } });
+
+    return transition.onMatch({ doc }).then(changed => {
+      assert(!changed);
+      assert(!doc.contact);
+      assert(!doc.errors);
+    });
+  });
+
+  it('should return undefined when refid result is not a known contact type', () => {
+    const doc = {
+      type: DOC_TYPES.DATA_RECORD,
+      from: '+12345',
+      refid: '1000',
+      content_type: 'xml',
+    };
+
+    const result = {
+      _id: 'some-id',
+      type: 'unknown_type',
+      name: 'Unknown',
+    };
+
+    // config has no contact_types matching 'unknown_type', so getContactType returns undefined
+    config.getAll.returns({ contact_types: [{ id: 'clinic' }] });
+    sinon.stub(db.medic, 'query').resolves({ rows: [{ doc: result }] });
+
+    return transition.onMatch({ doc }).then(changed => {
+      // no contact found (getContactByRefid returned undefined), and it's xml so no error
+      assert(!changed);
+      assert(!doc.contact);
+    });
+  });
+
+  it('should update clinic by refid when result is a person type', async () => {
+    const doc = {
+      type: DOC_TYPES.DATA_RECORD,
+      from: '+12345',
+      refid: '1000',
+    };
+
+    const personDoc = {
+      _id: 'person-id',
+      type: 'person',
+      name: 'A Person',
+      phone: '+34567890123',
+    };
+
+    const personWithLineage = {
+      _id: 'person-id',
+      type: 'person',
+      name: 'A Person',
+      phone: '+34567890123',
+      parent: { _id: 'parent-id' },
+    };
+
+    // contact_types includes a person type with person: true
+    config.getAll.returns({ contact_types: [{ id: 'person', person: true }] });
+    sinon.stub(db.medic, 'query').resolves({ rows: [{ doc: personDoc }] });
+    const getPersonWithLineage = sinon.stub().resolves(personWithLineage);
+    dataContext.bind.returns(getPersonWithLineage);
+
+    const changed = await transition.onMatch({ doc });
+
+    assert(changed);
+    assert(doc.contact);
+    assert.equal(doc.contact._id, 'person-id');
+    assert.equal(doc.contact.name, 'A Person');
+    assert.isTrue(dataContext.bind.calledOnceWithExactly(Person.v1.getWithLineage));
+    assert.isTrue(getPersonWithLineage.calledOnceWithExactly(Qualifier.byUuid('person-id')));
+  });
+
+  it('should handle contacts of hardcoded type with a contact_type property', () => {
+    const doc = {
+      type: DOC_TYPES.DATA_RECORD,
+      from: '+12345',
+      refid: '1000',
+    };
+
+    const contact = {
+      type: CONTACT_TYPES.CLINIC,
+      contact_type: 'soemthing',
+      name: 'Clinic',
+      place_id: '1000',
+      contact: {
+        name: 'CCN',
+        phone: '+34567890123',
+      },
+      parent: {
+        type: CONTACT_TYPES.HEALTH_CENTER,
+        name: 'Health Center',
+        contact: {
+          name: 'HCCN',
+          phone: '+23456789012',
+        },
+        parent: {
+          type: CONTACT_TYPES.DISTRICT_HOSPITAL,
+          name: 'District',
+          contact: {
+            name: 'DCN',
+            phone: '+12345678901',
+          },
+        },
+      },
+    };
+
+    config.getAll.returns({ contact_types: [ { id: 'clinic' } ] });
+    sinon.stub(db.medic, 'query').resolves({ rows: [{ doc: contact }] });
+    getContactWithLineage.resolves(contact);
+    return transition.onMatch({ doc: doc }).then(changed => {
+      assert(changed);
+      assert(doc.contact);
+      assert.deepEqual(doc.contact, contact.contact);
+    });
+  });
+
+});

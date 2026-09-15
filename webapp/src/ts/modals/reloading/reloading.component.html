@@ -1,0 +1,10 @@
+<mm-modal-layout
+  id="update-available"
+  [titleKey]="'version.update.title'"
+  [submitKey]="'Reload'"
+  [isFlatButton]="true"
+  (onCancel)="close()"
+  (onSubmit)="submit()"
+>
+  <p>{{ 'version.update.description' | translate }}</p>
+</mm-modal-layout>

@@ -1,0 +1,134 @@
+@import "variables";
+@import "badge";
+@import "button";
+@import "dropdown";
+@import "icon";
+@import "modal";
+@import "password";
+
+a {
+  cursor: pointer;
+}
+.btn-primary {
+  background-color: @button-color;
+}
+
+.nav-tabs {
+  padding: 0 10px;
+  a {
+    outline: 0;
+  }
+}
+
+.tab-content {
+  padding: 10px;
+}
+
+.form-control {
+  padding-top: 5px;
+  padding-bottom: 5px;
+
+  &.medium {
+    max-width: 400px;
+  }
+  &.small {
+    max-width: 180px;
+  }
+  &.tiny {
+    max-width: 80px;
+  }
+  &.inline {
+    display: inline-block;
+  }
+}
+
+.action-list .btn {
+  .fa, .fa-stack {
+    margin-right: 5px;
+  }
+}
+
+.btn-link {
+  color: @text-link-color;
+
+  &:hover,
+  &:focus {
+    color: @text-link-active-color;
+  }
+
+  &.btn-danger {
+    color: @error-color;
+  }
+}
+
+.select2-chosen,
+.select2-choice > span:first-child,
+.select2-container .select2-choices .select2-search-field input {
+  padding: 5px;
+}
+
+.select2-container .select2-selection--single {
+  height: 34px;
+}
+
+.select2-container--default .select2-selection--single {
+  border: 1px solid #ccc;
+  .select2-selection__arrow b {
+    margin-top: 0;
+  }
+}
+
+.select2-missing + span.select2-container .select2-selection__rendered {
+  color: @inactive-color;
+}
+
+.popover .popover-title {
+  background-color: @background-color;
+}
+
+.item-summary {
+  padding: 10px;
+  .icon {
+    float: left;
+    margin-right: 4px;
+    img,
+    svg {
+      width: @icon-small;
+      height: @icon-small;
+    }
+  }
+  .detail {
+    overflow: auto;
+    .status {
+      display: inline-block;
+      margin-left: 10px;
+      svg {
+        vertical-align: middle;
+      }
+    }
+    .time .full-date {
+      color: @label-color;
+    }
+    .name {
+      font-weight: bold;
+    }
+  }
+}
+
+.progress {
+  background-color: @targets-progress-bar-background-color;
+  box-shadow: none;
+  margin: 20px 8px 8px 8px;
+  .progress-bar {
+    box-shadow: none;
+  }
+}
+
+.weeks-pregnant {
+  &.upcoming-edd {
+    color: @ok-color;
+  }
+  &.approximate:before {
+    content: '~';
+  }
+}

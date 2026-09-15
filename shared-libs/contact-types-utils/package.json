@@ -1,0 +1,11 @@
+{
+  "name": "@medic/contact-types-utils",
+  "version": "1.0.0",
+  "description": "Provides helper function that manages flexible contact types",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "nyc --nycrcPath='../nyc.config.js' mocha ./test"
+  },
+  "author": "",
+  "license": "Apache-2.0"
+}

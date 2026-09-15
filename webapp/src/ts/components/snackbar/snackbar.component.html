@@ -1,0 +1,12 @@
+<div id="snackbar" [class.active]="active" [class.display-above-fab]="displayAboveFab">
+  <span class="snackbar-content">
+    <span class="snackbar-message">{{message}}</span>
+
+    @if (action) {
+      <span class="snackbar-action"
+            (click)="action.onClick()"
+            (keydown.enter)="action.onClick()">{{action.label}}</span>
+    }
+
+  </span>
+</div>

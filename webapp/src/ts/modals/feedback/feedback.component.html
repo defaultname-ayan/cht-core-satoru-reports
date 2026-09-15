@@ -1,0 +1,21 @@
+<mm-modal-layout
+  id="feedback"
+  [processing]="processing"
+  [error]="errors.submit"
+  [titleKey]="'Report Bug'"
+  [submitKey]="'feedback.modal.submit'"
+  [isFlatButton]="true"
+  (onCancel)="close()"
+  (onSubmit)="submit()"
+>
+  <form action="" method="POST">
+    <div class="form-group" [class.has-error]="errors.message">
+      <textarea [(ngModel)]="model.message" class="form-control" name="message" placeholder="{{ 'Bug description' | translate }}"></textarea>
+
+      @if (errors.message) {
+        <span class="help-block">{{ errors.message }}</span>
+      }
+
+    </div>
+  </form>
+</mm-modal-layout>

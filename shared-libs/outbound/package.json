@@ -1,0 +1,16 @@
+{
+  "name": "@medic/outbound",
+  "version": "1.0.0",
+  "description": "Configurable outbound REST driver",
+  "main": "src/outbound.js",
+  "scripts": {
+    "test": "nyc --nycrcPath='../nyc.config.js' mocha ./test --require test/setup.js"
+  },
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@medic/couch-request": "file:../couch-request",
+    "@medic/logger": "file:../logger",
+    "@medic/settings": "file:../settings"
+  }
+}

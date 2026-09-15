@@ -1,0 +1,105 @@
+<div class="row header">
+  <div class="inner">
+    <a routerLink="home">
+      <div class="logo">
+        <div class="logo-full" [innerHtml]="'logo' | headerLogo"></div>
+      </div>
+    </a>
+
+    <div class="extras">
+
+      <span class="dropdown options" dropdown>
+        <a href dropdownToggle (click)="false" id="header-dropdown-link" aria-controls="header-dropdown">
+          <div class="mm-icon mm-icon-inverse">
+            <span class="fa fa-fw fa-bars"></span>
+          </div>
+        </a>
+        <ul id="header-dropdown" *dropdownMenu class="dropdown-menu mm-dropdown-menu" role="menu" aria-labelledby="header-dropdown-link">
+
+          <li mmAuth [mmAuthOnline]="false">
+            <a role="menuitem" class="storage-info">
+              <i class="fa fa-fw fa-hdd-o"></i>
+              <strong>{{'Storage Info' | translate}}</strong>
+              <div class="progress-bar-container">
+                <div
+                  id="storage-pressure-progress-bar"
+                  class="progress-bar"
+                  [ngClass]="storagePressureClass"
+                  [style.width.%]="storageUsagePercentage"
+                  [title]="'Used: ' + storageUsagePercentage.toFixed(2) + '%'"
+                  [attr.aria-label]="('storage.used' | translate) + ': ' + storageUsagePercentage.toFixed(2) + '%'">
+                </div>
+              </div>
+              <span>{{ 'storage.available.space' | translate }}: {{availableStorageSpace}}</span>
+            </a>
+          </li>
+
+          <li role="presentation disabled" *ngIf="!replicationStatus.disabled" [ngClass]="{ 'disabled': replicationStatus.current?.disableSyncButton }">
+            <a role="menuitem" tabindex="-1" (click)="!replicationStatus.current?.disableSyncButton && replicate()">
+              <i class="fa fa-fw fa-refresh"></i>
+              <span>{{'sync.now' | translate}}</span>
+            </a>
+          </li>
+
+          <li role="separator" class="divider" *ngIf="!replicationStatus.disabled"></li>
+
+          <li role="presentation disabled" *ngIf="!replicationStatus.disabled" class="sync-status">
+            <a class="no-click" [ngClass]="replicationStatus.current?.className" *ngIf="replicationStatus.current">
+              <i class="fa fa-fw" [ngClass]="replicationStatus.current?.icon"></i>
+              <span>{{replicationStatus.current.key | translate}}</span>
+            </a>
+            <a class="no-click last-sync" *ngIf="replicationStatus.lastSuccessTo">
+              <span>{{'sync.last_success' | translate}}</span>
+              <span [innerHTML]="replicationStatus.lastSuccessTo | relativeDate"></span>
+            </a>
+          </li>
+
+          <li role="separator" class="divider" *ngIf="!replicationStatus.disabled"></li>
+
+          <li role="presentation" class="desktop-only" mmAuth [mmAuthAny]="[ 'can_configure', 'can_view_outgoing_messages', 'can_export_all' ]" [mmAuthOnline]="true">
+            <a href="{{adminUrl}}" role="menuitem" tabindex="-1" rel="noopener noreferrer">
+              <i class="fa fa-fw fa-cog"></i>
+              <span>{{'admin.app.name' | translate}}</span>
+            </a>
+          </li>
+
+          <ng-container *ngFor="let tab of headerTabsForLegacySidebar">
+            <li>
+              <a role="menuitem" tabindex="-1"
+                 *ngIf="tab.name !== 'privacy-policy' || showPrivacyPolicy"
+                 [routerLink]="tab.route"
+                 (click)="onLegacyMenuClick(tab)">
+                <span class="nav-icon" *ngIf="tab.resourceIcon" [innerHTML]="tab.resourceIcon | resourceIcon"></span>
+                <i *ngIf="!tab.resourceIcon" class="fa fa-fw {{tab.icon || tab.defaultIcon}}"></i>
+                <span>{{tab.translation | translate}}</span>
+              </a>
+            </li>
+          </ng-container>
+
+          <li role="presentation" *ngIf="canLogOut">
+            <a role="menuitem" tabindex="-1" rel="external" (click)="logout()">
+              <i class="fa fa-fw fa-power-off"></i>
+              <span>{{'Log Out' | translate}}</span>
+            </a>
+          </li>
+        </ul>
+      </span>
+    </div>
+
+    <div class="tabs small-font">
+      <a *ngFor="let tab of permittedTabs" routerLink="{{tab.route}}" id="{{tab.name}}-tab" class="{{tab.name}}-tab" [class.selected]="currentTab === tab.name" [style.--accent-color]="tab.accentColor">
+        <div class="mm-icon" [class.mm-icon-inverse]="currentTab !== tab.name">
+          <span *ngIf="!tab.resourceIcon" class="fa {{tab.icon}}"><span *ngIf="!tab.icon" class="fa {{tab.defaultIcon}}"></span></span>
+          <span *ngIf="tab.resourceIcon" [innerHTML]="tab.resourceIcon | resourceIcon:tab.defaultIcon"></span>
+          <span class="mm-badge-overlay mm-badge-overlay-top" *ngIf="bubbleCount[tab.typeName] > 0">
+            <span class="mm-badge mm-badge-red mm-badge-border" *ngIf="bubbleCount[tab.typeName] < 100">{{bubbleCount[tab.typeName] | localizeNumber}}</span>
+            <span class="mm-badge mm-badge-red mm-badge-border" *ngIf="bubbleCount[tab.typeName] >= 100">{{'100 +' | localizeNumber}}</span>
+          </span>
+        </div>
+        <div class="button-label">{{tab.translation | translate}}</div>
+      </a>
+    </div>
+
+    <mobile-detection></mobile-detection>
+  </div>
+</div>

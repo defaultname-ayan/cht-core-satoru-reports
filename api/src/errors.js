@@ -1,0 +1,60 @@
+class PublicError extends Error {
+  constructor(publicMessage, ...args) {
+    super(publicMessage, ...args);
+    this.publicMessage = publicMessage;
+  }
+}
+
+class NotFoundError extends Error {
+  constructor(message, ...args) {
+    super(message, ...args);
+    this.status = 404; // simulate PouchDb error
+    this.statusCode = 404; // simulate Request error
+  }
+}
+
+class PermissionError extends Error {
+  constructor(message, ...args) {
+    super(message, ...args);
+    this.code = 403;
+  }
+}
+
+class AuthenticationError extends Error {
+  constructor(message, ...args) {
+    super(message, ...args);
+    this.code = 401;
+  }
+}
+
+class ContentTypeError extends Error {
+  constructor(message, ...args) {
+    super(message, ...args);
+    this.code = 415;
+  }
+}
+
+class BadRequestError extends Error {
+  constructor(message, ...args) {
+    super(message, ...args);
+    this.code = 400;
+  }
+}
+
+class PayloadTooLargeError extends Error {
+  constructor(message, ...args) {
+    super(message, ...args);
+    this.code = 413;
+  }
+}
+
+
+module.exports = {
+  PublicError,
+  NotFoundError,
+  PermissionError,
+  AuthenticationError,
+  ContentTypeError,
+  BadRequestError,
+  PayloadTooLargeError,
+};

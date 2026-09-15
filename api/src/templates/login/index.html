@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html dir="{{ defaultDir }}">
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#323232">
+    <title>{{ branding.name }}</title>
+    <link href="/login/style.css" media="all" rel="stylesheet">
+    <link rel="shortcut icon" href="/favicon.ico">
+    <link rel="manifest" href="/manifest.json">
+  </head>
+  <body data-default-locale="{{ defaultLocale }}" data-translations="{{ translations }}">
+    <div class="center">
+      <form id="form" action="/medic/login" method="POST">
+        <img class="logo" src="{{ branding.logo }}" title="{{ branding.name }}">
+        <p id="unsupported-browser" class="hidden">
+          <span translate="login.unsupported_browser"></span>
+          <span id="unsupported-browser-update"></span>
+        </p>
+        <div id="login-fields">
+        <label for="user" translate="User Name"></label>
+          <input id="user" name="user" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"/>
+          <label for="password" translate="Password"></label>
+          <div id="password-container" class="hidden-password">
+            <input id="password" name="password" type="password"/>
+            <div id="password-toggle">
+              <img class="show-password-icon" src="/login/images/show-password.svg" translate-title="login.show_password">
+              <img class="hide-password-icon" src="/login/images/hide-password.svg" translate-title="login.hide_password">
+            </div>
+          </div>
+          <p class="error offline" translate="online.action.message"></p>
+          <p class="error incorrect" translate="login.incorrect"></p>
+          <p class="error unknown" translate="login.error"></p>
+          <p class="error sso_user_invalid" translate="login.sso.user_invalid"></p>
+          <button id="login" class="btn" translate="login"></button>
+          <% if(hasOidcProvider) { %>
+          <button id="login-sso" class="btn" translate="login.sso"></button>
+          <% } %>
+        </div>
+        <div class="loader"></div>
+      </form>
+      <div id="locale" class="wrapper">
+        <% locales.forEach(function(locale) { %>
+          <a href="#" name="{{ locale.key }}" class="locale"<% if (locale.rtl) { %> data-rtl="true"<% } %>>{{ locale.label }}</a>
+        <% }); %>
+      </div>
+      <% if(hasPrivacyPolicy) { %>
+      <div class="wrapper legal">
+        <a href="/medic/privacy-policy?back=true" translate="privacy.policy"></a>
+      </div>
+      <% } %>
+    </div>
+    <script src="/login/lib-bowser.js"></script>
+    <script src="/login/auth-utils.js"></script>
+    <script src="/login/script.js"></script>
+  </body>
+</html>

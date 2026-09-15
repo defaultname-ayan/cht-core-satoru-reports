@@ -1,0 +1,109 @@
+import { Store, createAction } from '@ngrx/store';
+
+import { createMultiValueAction, createSingleValueAction } from '@mm-actions/actionUtils';
+import { GlobalActions } from '@mm-actions/global';
+
+export const Actions = {
+  openReportContent: createSingleValueAction('OPEN_REPORT_CONTENT', 'report'),
+  selectReportToOpen: createMultiValueAction('SELECT_REPORT_TO_OPEN'),
+  selectReport: createSingleValueAction('SELECT_REPORT', 'reportId'),
+  addSelectedReport: createSingleValueAction('ADD_SELECTED_REPORT', 'report'),
+  removeSelectedReport: createSingleValueAction('REMOVE_SELECTED_REPORT', 'report'),
+  setSelectedReport: createSingleValueAction('SET_SELECTED_REPORT', 'selectedReport'),
+  setSelectedReports: createSingleValueAction('SET_SELECTED_REPORTS', 'selectedReports'),
+  setVerifyingReport: createSingleValueAction('SET_VERIFYING_REPORT', 'verifyingReport'),
+  toggleVerifyingReport: createAction('TOGGLE_VERIFYING_REPORT'),
+  verifyReport: createSingleValueAction('VERIFY_REPORT', 'verified'),
+  updateSelectedReportsItem: createMultiValueAction('UPDATE_SELECTED_REPORTS_ITEM'),
+  markReportRead: createSingleValueAction('MARK_REPORT_READ', 'id'),
+  launchEditFacilityDialog: createAction('LAUNCH_EDIT_FACILITY_DIALOG'),
+  setSelectedReportDocProperty: createMultiValueAction('SET_SELECTED_REPORT_DOC_PROPERTY'),
+  setSelectedReportFormattedProperty: createMultiValueAction('SET_SELECTED_REPORT_FORMATTED_PROPERTY'),
+  updateReportsList: createSingleValueAction('UPDATE_REPORTS_LIST', 'reports'),
+  removeReportFromList: createSingleValueAction('REMOVE_REPORT_FROM_LIST', 'report'),
+  resetReportsList: createAction('RESET_REPORTS_LIST'),
+  setTitle: createSingleValueAction('SET_REPORTS_TITLE', 'selected'),
+};
+
+export class ReportsActions {
+  constructor(private store: Store) {}
+
+  openReportContent(report) {
+    return this.store.dispatch(Actions.openReportContent(report));
+  }
+
+  addSelectedReport(selected) {
+    return this.store.dispatch(Actions.addSelectedReport(selected));
+  }
+
+  selectReport(reportId) {
+    return this.store.dispatch(Actions.selectReport(reportId));
+  }
+
+  selectReportToOpen(reportId, { silent = false }={}) {
+    return this.store.dispatch(Actions.selectReportToOpen({ reportId, silent }));
+  }
+
+  removeSelectedReport(id) {
+    this.store.dispatch(Actions.removeSelectedReport(id));
+    const globalActions = new GlobalActions(this.store);
+    globalActions.unsetComponents();
+  }
+
+  setSelectedReport(selected?) {
+    return this.store.dispatch(Actions.setSelectedReport(selected));
+  }
+
+  setSelectedReports(selected) {
+    return this.store.dispatch(Actions.setSelectedReports(selected));
+  }
+
+  updateReportsList(reports) {
+    return this.store.dispatch(Actions.updateReportsList(reports));
+  }
+
+  removeReportFromList(report) {
+    return this.store.dispatch(Actions.removeReportFromList(report));
+  }
+
+  resetReportsList() {
+    return this.store.dispatch(Actions.resetReportsList());
+  }
+
+  setVerifyingReport(verifyingReport) {
+    return this.store.dispatch(Actions.setVerifyingReport(verifyingReport));
+  }
+
+  setTitle(selected) {
+    return this.store.dispatch(Actions.setTitle(selected));
+  }
+
+  markReportRead(id) {
+    return this.store.dispatch(Actions.markReportRead(id));
+  }
+
+  clearSelection() {
+    this.setSelectedReport();
+    this.setSelectedReports([]);
+  }
+
+  updateSelectedReportsItem(id, selected) {
+    return this.store.dispatch(Actions.updateSelectedReportsItem({ id, selected }));
+  }
+
+  launchEditFacilityDialog() {
+    this.store.dispatch(Actions.launchEditFacilityDialog());
+  }
+
+  verifyReport(verified) {
+    return this.store.dispatch(Actions.verifyReport(verified));
+  }
+
+  setSelectedReportDocProperty(id, doc) {
+    return this.store.dispatch(Actions.setSelectedReportDocProperty({ id, doc }));
+  }
+
+  setSelectedReportFormattedProperty(id, formatted) {
+    return this.store.dispatch(Actions.setSelectedReportFormattedProperty({ id, formatted }));
+  }
+}

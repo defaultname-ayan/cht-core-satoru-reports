@@ -1,0 +1,14 @@
+{
+  "name": "@medic/calendar-interval",
+  "version": "1.0.0",
+  "description": "Provides helper function when dealing with monthly calendar intervals",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "nyc --nycrcPath='../nyc.config.js' mocha ./test"
+  },
+  "dependencies": {
+    "bikram-sambat": "^1.8.1"
+  },
+  "author": "",
+  "license": "Apache-2.0"
+}

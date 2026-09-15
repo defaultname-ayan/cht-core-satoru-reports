@@ -1,0 +1,754 @@
+import { ActivationEnd, ActivationStart, Router, RouterOutlet } from '@angular/router';
+import { DomSanitizer } from '@angular/platform-browser';
+import { MatIconRegistry } from '@angular/material/icon';
+import * as moment from 'moment';
+import { AfterViewInit, Component, HostListener, NgZone, OnInit } from '@angular/core';
+import { Store } from '@ngrx/store';
+import { setTheme as setBootstrapTheme } from 'ngx-bootstrap/utils';
+import { combineLatest, take } from 'rxjs';
+
+import { DBSyncService, SyncStatus } from '@mm-services/db-sync.service';
+import { Selectors } from '@mm-selectors/index';
+import { GlobalActions } from '@mm-actions/global';
+import { SessionService } from '@mm-services/session.service';
+import { AuthService } from '@mm-services/auth.service';
+import { CustomResourceService } from '@mm-services/custom-resource.service';
+import { ChangesService } from '@mm-services/changes.service';
+import { UpdateServiceWorkerService } from '@mm-services/update-service-worker.service';
+import { LocationService } from '@mm-services/location.service';
+import { ModalService } from '@mm-services/modal.service';
+import { ReloadingComponent } from '@mm-modals/reloading/reloading.component';
+import { FeedbackService } from '@mm-services/feedback.service';
+import { FormatDateService } from '@mm-services/format-date.service';
+import { XmlFormsService } from '@mm-services/xml-forms.service';
+import { JsonFormsService } from '@mm-services/json-forms.service';
+import { TranslateFromService } from '@mm-services/translate-from.service';
+import { CountMessageService } from '@mm-services/count-message.service';
+import { PrivacyPoliciesService } from '@mm-services/privacy-policies.service';
+import { LanguageService, SetLanguageService } from '@mm-services/language.service';
+import { UnreadRecordsService } from '@mm-services/unread-records.service';
+import { RulesEngineService } from '@mm-services/rules-engine.service';
+import { RecurringProcessManagerService } from '@mm-services/recurring-process-manager.service';
+import { RouteSnapshotService } from '@mm-services/route-snapshot.service';
+import { CheckDateService } from '@mm-services/check-date.service';
+import { SessionExpiredComponent } from '@mm-modals/session-expired/session-expired.component';
+import { WealthQuintilesWatcherService } from '@mm-services/wealth-quintiles-watcher.service';
+import { DatabaseConnectionMonitorService } from '@mm-services/database-connection-monitor.service';
+import { DatabaseClosedComponent } from '@mm-modals/database-closed/database-closed.component';
+import { TranslationDocsMatcherProvider } from '@mm-providers/translation-docs-matcher.provider';
+import { TranslateLocaleService } from '@mm-services/translate-locale.service';
+import { TelemetryService } from '@mm-services/telemetry.service';
+import { InteractionTrackingService } from '@mm-services/interaction-tracking.service';
+import { TransitionsService } from '@mm-services/transitions.service';
+import { CHTDatasourceService } from '@mm-services/cht-datasource.service';
+import { TranslateService } from '@mm-services/translate.service';
+import { AnalyticsModulesService } from '@mm-services/analytics-modules.service';
+import { AnalyticsActions } from '@mm-actions/analytics';
+import { TrainingCardsService } from '@mm-services/training-cards.service';
+import { FormService } from '@mm-services/form.service';
+import { BrowserDetectorService } from '@mm-services/browser-detector.service';
+import { BrowserCompatibilityComponent } from '@mm-modals/browser-compatibility/browser-compatibility.component';
+import { PerformanceService } from '@mm-services/performance.service';
+import { UserSettings, UserSettingsService } from '@mm-services/user-settings.service';
+import { HeaderComponent, OLD_NAV_PERMISSION } from '@mm-components/header/header.component';
+import { NgIf } from '@angular/common';
+import { PrivacyPolicyComponent } from '@mm-modules/privacy-policy/privacy-policy.component';
+import { SidebarMenuComponent } from '@mm-components/sidebar-menu/sidebar-menu.component';
+import { SnackbarComponent } from '@mm-components/snackbar/snackbar.component';
+import { TasksNotificationService } from '@mm-services/task-notifications.service';
+import { HTTP_HEADERS, DOC_IDS, DOC_TYPES, PREFIXES } from '@medic/constants';
+import { MobileTooltipDirective } from '@mm-directives/mobile-tooltip.directive';
+
+const SYNC_STATUS = {
+  inProgress: {
+    icon: 'fa-refresh',
+    key: 'sync.status.in_progress',
+    disableSyncButton: true
+  },
+  success: {
+    icon: 'fa-check',
+    key: 'sync.status.not_required',
+    className: 'success'
+  },
+  required: {
+    icon: 'fa-exclamation-triangle',
+    key: 'sync.status.required',
+    className: 'required'
+  },
+  unknown: {
+    icon: 'fa-info-circle',
+    key: 'sync.status.unknown'
+  }
+};
+
+const DOC_IDS_TRIGGER_UPDATE = new Set([
+  '_design/medic',
+  '_design/medic-client',
+  DOC_IDS.SERVICE_WORKER_META,
+  DOC_IDS.SETTINGS,
+  DOC_IDS.EXTENSION_LIBS
+]);
+
+@Component({
+  selector: 'app-root',
+  templateUrl: './app.component.html',
+  imports: [
+    NgIf,
+    PrivacyPolicyComponent,
+    SidebarMenuComponent,
+    HeaderComponent,
+    RouterOutlet,
+    SnackbarComponent,
+    MobileTooltipDirective,
+  ],
+})
+export class AppComponent implements OnInit, AfterViewInit {
+  private readonly globalActions: GlobalActions;
+  private readonly analyticsActions: AnalyticsActions;
+  setupPromise;
+  translationsLoaded;
+  currentTab = '';
+  privacyPolicyAccepted;
+  isSidebarFilterOpen = false;
+  openSearch = false;
+  showPrivacyPolicy;
+  selectMode;
+  adminUrl;
+  canLogOut;
+  replicationStatus;
+  androidAppVersion;
+  hasOldNav = false;
+  initialisationComplete = false;
+  direction;
+  private readonly SVG_ICONS = new Map([
+    ['icon-close', './img/icon-close.svg'],
+    ['icon-filter', './img/icon-filter.svg'],
+    ['icon-back', './img/icon-back.svg'],
+    ['icon-check', './img/icon-check.svg'],
+  ]);
+
+  constructor (
+    private readonly dbSyncService:DBSyncService,
+    private readonly store:Store,
+    private readonly translateService:TranslateService,
+    private readonly languageService:LanguageService,
+    private readonly setLanguageService:SetLanguageService,
+    private readonly sessionService:SessionService,
+    private readonly authService:AuthService,
+    private readonly customResourceService:CustomResourceService,
+    private readonly changesService:ChangesService,
+    private readonly updateServiceWorker:UpdateServiceWorkerService,
+    private readonly locationService:LocationService,
+    private readonly modalService:ModalService,
+    private readonly router:Router,
+    private readonly domSanitizer: DomSanitizer,
+    private readonly feedbackService:FeedbackService,
+    private readonly formatDateService:FormatDateService,
+    private readonly xmlFormsService:XmlFormsService,
+    private readonly jsonFormsService:JsonFormsService,
+    private readonly translateFromService:TranslateFromService,
+    private readonly countMessageService:CountMessageService,
+    private readonly privacyPoliciesService:PrivacyPoliciesService,
+    private readonly routeSnapshotService:RouteSnapshotService,
+    private readonly checkDateService:CheckDateService,
+    private readonly unreadRecordsService:UnreadRecordsService,
+    private readonly rulesEngineService:RulesEngineService,
+    private readonly recurringProcessManagerService:RecurringProcessManagerService,
+    private readonly wealthQuintilesWatcherService: WealthQuintilesWatcherService,
+    private readonly databaseConnectionMonitorService: DatabaseConnectionMonitorService,
+    private readonly translateLocaleService:TranslateLocaleService,
+    private readonly telemetryService:TelemetryService,
+    private readonly performanceService:PerformanceService,
+    private readonly transitionsService:TransitionsService,
+    private readonly ngZone:NgZone,
+    private readonly chtDatasourceService: CHTDatasourceService,
+    private readonly analyticsModulesService: AnalyticsModulesService,
+    private readonly trainingCardsService: TrainingCardsService,
+    private readonly matIconRegistry: MatIconRegistry,
+    private readonly browserDetectorService: BrowserDetectorService,
+    private readonly userSettingsService: UserSettingsService,
+    private readonly formService: FormService,
+    private readonly taskNotificationService: TasksNotificationService,
+    private readonly interactionTrackingService: InteractionTrackingService,
+  ) {
+    this.globalActions = new GlobalActions(store);
+    this.analyticsActions = new AnalyticsActions(store);
+    this.registerMaterialIcons();
+    moment.locale(['en']);
+    this.formatDateService.init();
+    this.adminUrl = this.locationService.adminPath;
+    setBootstrapTheme('bs4');
+  }
+
+  private loadTranslations() {
+    this.translationsLoaded = this.languageService
+      .get()
+      .then((language) => this.setLanguageService.set(language, false))
+      .then(() => this.globalActions.setTranslationsLoaded())
+      .catch(err => {
+        console.error('Error loading language', err);
+      });
+  }
+
+  private registerMaterialIcons() {
+    this.matIconRegistry.registerFontClassAlias('fontawesome', 'fa');
+    this.matIconRegistry.setDefaultFontSetClass('fa');
+
+    this.SVG_ICONS.forEach((iconPath, iconName) => {
+      // Disabling Sonar because we trust the SVG_ICONS defined as readonly above
+      const iconUrl = this.domSanitizer.bypassSecurityTrustResourceUrl(iconPath); //NoSONAR
+      this.matIconRegistry.addSvgIcon(iconName, iconUrl);
+    });
+  }
+
+  private setupRouter() {
+    const getTab = (snapshot) => {
+      let tab;
+      do {
+        tab = snapshot.data.tab;
+        snapshot = snapshot.parent;
+      } while (!tab && snapshot?.parent);
+      return tab;
+    };
+
+    this.router.events.subscribe((event:ActivationStart|ActivationEnd) => {
+      // close all select2 menus on navigation
+      // https://github.com/medic/cht-core/issues/2927
+      if (event instanceof ActivationStart) {
+        this.closeDropdowns();
+      }
+
+      if (event instanceof ActivationEnd) {
+        const tab = getTab(event.snapshot);
+        if (tab !== this.currentTab) {
+          this.globalActions.setCurrentTab(tab);
+        }
+        const data = this.routeSnapshotService.get()?.data;
+        this.globalActions.setSnapshotData(data);
+      }
+    });
+  }
+
+  private setupDb() {
+    this.globalActions.updateReplicationStatus({
+      disabled: false,
+      lastTrigger: undefined,
+      lastSuccessTo: parseInt(window.localStorage.getItem('medic-last-replicated-date')!),
+    });
+
+    // Set this first because if there are any bugs in configuration
+    // we want to ensure dbsync still happens so they can be fixed
+    // automatically.
+    if (this.dbSyncService.isEnabled()) {
+      // Delay it by 10 seconds so it doesn't slow down initial load.
+      setTimeout(() => this.dbSyncService.sync(), 10 * 1000);
+    } else {
+      console.debug('You have administrative privileges; not replicating');
+      this.globalActions.updateReplicationStatus({ disabled: true });
+    }
+
+    const dbFetch = window.PouchDB.fetch;
+    window.PouchDB.fetch = (...args) => {
+      return dbFetch
+        .apply(dbFetch, args)
+        .then((response) => {
+          // ignore 401 that could come through other channels than CHT API
+          if (response.status === 401 && response.headers?.get(HTTP_HEADERS.LOGOUT_AUTHORIZATION) === 'CHT-Core API') {
+            this.showSessionExpired();
+            setTimeout(() => {
+              console.info('Redirect to login after 1 minute of inactivity');
+              this.sessionService.navigateToLogin();
+            }, 60000);
+          }
+          return response;
+        });
+    };
+
+    this.dbSyncService.subscribe(({ state, to, from }) => {
+      if (state === SyncStatus.Disabled) {
+        this.globalActions.updateReplicationStatus({ disabled: true });
+        return;
+      }
+
+      if (state === SyncStatus.Unknown) {
+        this.globalActions.updateReplicationStatus({ current: SYNC_STATUS.unknown });
+        return;
+      }
+
+      const now = Date.now();
+      const lastTrigger = this.replicationStatus.lastTrigger;
+      const delay = lastTrigger ? Math.round((now - lastTrigger) / 1000) : 'unknown';
+
+      if (state === SyncStatus.InProgress) {
+        this.globalActions.updateReplicationStatus({
+          current: SYNC_STATUS.inProgress,
+          lastTrigger: now
+        });
+        console.info(`Replication started after ${delay} seconds since previous attempt`);
+        return;
+      }
+
+      const statusUpdates:any = {};
+      if (to === SyncStatus.Success) {
+        statusUpdates.lastSuccessTo = now;
+      }
+      if (from === SyncStatus.Success) {
+        statusUpdates.lastSuccessFrom = now;
+      }
+      if (to === SyncStatus.Success && from === SyncStatus.Success) {
+        console.info(`Replication succeeded after ${delay} seconds`);
+        statusUpdates.current = SYNC_STATUS.success;
+      } else {
+        console.info(`Replication failed after ${delay} seconds`);
+        statusUpdates.current = SYNC_STATUS.required;
+      }
+      this.globalActions.updateReplicationStatus(statusUpdates);
+    });
+  }
+
+  ngOnInit(): void {
+    this.recordStartupTelemetry();
+    this.subscribeToStore();
+    this.setupRouter();
+    this.loadTranslations();
+    this.setupDb();
+    this.countMessageService.init();
+    this.feedbackService.init();
+    this.sessionService.init();
+    this.warnOutdatedChrome();
+
+    // initialisation tasks that can occur after the UI has been rendered
+    this.setupPromise = Promise.resolve()
+      .then(() => this.chtDatasourceService.isInitialized())
+      .then(() => this.checkPrivacyPolicy())
+      .then(() => (this.initialisationComplete = true))
+      .then(() => this.initUser())
+      .then(() => this.interactionTrackingService.init())
+      .then(() => this.initRulesEngine())
+      .then(() => this.initTransitions())
+      .then(() => this.initForms())
+      .then(() => this.initBubbleCounter())
+      .then(() => this.checkDateService.check(true))
+      .then(() => this.startRecurringProcesses())
+      .catch(err => {
+        this.initialisationComplete = true;
+        console.error('Error during initialisation', err);
+        this.router.navigate(['/error', '503' ]);
+      });
+
+    this.watchBrandingChanges();
+    this.watchDDocChanges();
+    this.watchUserContextChanges();
+    this.watchTranslationsChanges();
+    this.watchDBSyncStatus();
+    this.watchDatabaseConnection();
+    this.setAppTitle();
+    this.setupAndroidVersion();
+    this.requestPersistentStorage();
+    this.startWealthQuintiles();
+    this.initAnalyticsModules();
+    this.initAndroidTaskNotifications();
+  }
+
+  private initAndroidTaskNotifications() {
+    if (typeof globalThis?.medicmobile_android?.updateTaskNotificationStore === 'function') {
+      this.taskNotificationService.initOnAndroid();
+    }
+  }
+
+  private async initUser() {
+    const userSettings:UserSettings = await this.userSettingsService.get();
+    this.globalActions.setUserContactId(userSettings.contact_id);
+    this.globalActions.setUserFacilityIds(userSettings.facility_id);
+    this.globalActions.setUserFacilities(await this.userSettingsService.getUserFacilities());
+    this.globalActions.setIsOnlineOnly(this.authService.online(true));
+  }
+
+  ngAfterViewInit() {
+    this.enableOldNav();
+    this.subscribeToSideFilterStore();
+  }
+
+  private initTransitions() {
+    if (!this.sessionService.isOnlineOnly()) {
+      return this.transitionsService.init();
+    }
+  }
+
+  private setupAndroidVersion() {
+    if (typeof window.medicmobile_android?.getAppVersion === 'function') {
+      this.globalActions.setAndroidAppVersion(window.medicmobile_android.getAppVersion());
+    }
+
+    if (this.androidAppVersion) {
+      this.authService
+        .has('can_log_out_on_android')
+        .then(canLogout => this.canLogOut = canLogout);
+    } else {
+      this.canLogOut = true;
+    }
+  }
+
+  private requestPersistentStorage() {
+    if (navigator.storage && navigator.storage.persist) {
+      navigator.storage
+        .persist()
+        .then(granted => {
+          if (granted) {
+            console.info('Persistent storage granted: storage will not be cleared except by explicit user action');
+          } else {
+            console.info('Persistent storage denied: storage may be cleared by the UA under storage pressure.');
+          }
+        });
+    }
+  }
+
+  private watchBrandingChanges() {
+    this.changesService.subscribe({
+      key: 'branding-icon',
+      filter: change => change.id === DOC_IDS.BRANDING,
+      callback: () => this.setAppTitle(),
+    });
+  }
+
+  private watchDDocChanges() {
+    this.updateServiceWorker.update(() => this.ngZone.run(() => this.showUpdateReady()));
+    this.changesService.subscribe({
+      key: 'ddoc',
+      filter: ({ id }) => DOC_IDS_TRIGGER_UPDATE.has(id) || id.startsWith(PREFIXES.UI_EXTENSION),
+      callback: (change) => {
+        if (change.id === DOC_IDS.SERVICE_WORKER_META) {
+          this.updateServiceWorker.update(() => this.ngZone.run(() => this.showUpdateReady()));
+
+        } else {
+          console.debug(`${change.id} changed`);
+          this.showUpdateReady();
+        }
+      },
+    });
+  }
+
+  private watchUserContextChanges() {
+    const userCtx = this.sessionService.userCtx();
+    this.changesService.subscribe({
+      key: 'user-context',
+      filter: (change) => {
+        return (
+          userCtx &&
+          userCtx.name &&
+          change.id === `${PREFIXES.COUCH_USER}${userCtx.name}`
+        );
+      },
+      callback: () => {
+        this.sessionService.init().then(refresh => refresh && this.showUpdateReady());
+      },
+    });
+  }
+
+  private watchTranslationsChanges() {
+    this.changesService.subscribe({
+      key: DOC_TYPES.TRANSLATIONS,
+      filter: change => TranslationDocsMatcherProvider.test(change.id),
+      callback: change => {
+        const locale = TranslationDocsMatcherProvider.getLocaleCode(change.id);
+        return this.languageService
+          .get()
+          .then(enabledLocale => {
+            const hotReload = enabledLocale === locale;
+            return this.translateLocaleService.reloadLang(locale, hotReload);
+          });
+      },
+    });
+  }
+
+  private watchDBSyncStatus() {
+    window.addEventListener('online', () => this.dbSyncService.setOnlineStatus(true), false);
+    window.addEventListener('offline', () => this.dbSyncService.setOnlineStatus(false), false);
+
+    this.changesService.subscribe({
+      key: 'sync-status',
+      callback: () => {
+        if (!this.dbSyncService.isSyncInProgress()) {
+          this.globalActions.updateReplicationStatus({ current: SYNC_STATUS.required });
+          this.dbSyncService.sync(false, true);
+        }
+      },
+    });
+  }
+
+  private watchDatabaseConnection() {
+    this.databaseConnectionMonitorService
+      .listenForDatabaseClosed()
+      .subscribe(() => {
+        this.modalService.show(DatabaseClosedComponent, { closeOnNavigation: false });
+        this.closeDropdowns();
+      });
+  }
+
+  private subscribeToStore() {
+    combineLatest([
+      this.store.select(Selectors.getReplicationStatus),
+      this.store.select(Selectors.getAndroidAppVersion),
+      this.store.select(Selectors.getCurrentTab),
+      this.store.select(Selectors.getSelectMode),
+      this.store.select(Selectors.getSearchBar),
+      this.store.select(Selectors.getDirection),
+    ]).subscribe(([
+      replicationStatus,
+      androidAppVersion,
+      currentTab,
+      selectMode,
+      searchBar,
+      direction,
+    ]) => {
+      this.replicationStatus = replicationStatus;
+      this.androidAppVersion = androidAppVersion;
+      this.currentTab = currentTab || '';
+      this.selectMode = selectMode;
+      this.openSearch = !!searchBar?.isOpen;
+      this.direction = direction;
+    });
+
+    combineLatest([
+      this.store.select(Selectors.getPrivacyPolicyAccepted),
+      this.store.select(Selectors.getShowPrivacyPolicy),
+    ]).subscribe(([ privacyPolicyAccepted, showPrivacyPolicy ]) => {
+      this.showPrivacyPolicy = showPrivacyPolicy;
+      this.privacyPolicyAccepted = privacyPolicyAccepted;
+    });
+
+    combineLatest([
+      this.store.select(Selectors.getUserContactId),
+      this.store.select(Selectors.getUserFacilityIds),
+    ]).subscribe(([ userContactId, userFacilityIds ]) => {
+      this.formService.setUserContext(userFacilityIds, userContactId);
+    });
+  }
+
+  private async subscribeToSideFilterStore() {
+    this.store
+      .select(Selectors.getSidebarFilter)
+      .subscribe(({ isOpen }) => this.isSidebarFilterOpen = !!isOpen);
+  }
+
+  private async enableOldNav() {
+    this.hasOldNav = !this.sessionService.isAdmin() && await this.authService.has(OLD_NAV_PERMISSION);
+  }
+
+  private initForms() {
+    /**
+     * Translates using the key if truthy using the old style label
+     * array as a fallback.
+     */
+    const translateTitle = (key, label) => {
+      return key ? this.translateService.instant(key) : this.translateFromService.get(label);
+    };
+
+    return this.translationsLoaded
+      .then(() => this.jsonFormsService.get())
+      .then((jsonForms) => {
+        const jsonFormSummaries = jsonForms.map((jsonForm) => {
+          return {
+            id: jsonForm.code,
+            code: jsonForm.code,
+            title: translateTitle(jsonForm.translation_key, jsonForm.name),
+            icon: jsonForm.icon,
+            subjectKey: jsonForm.subject_key
+          };
+        });
+        this.xmlFormsService.subscribe(
+          'FormsFilter',
+          { reportForms: true, ignoreContext: true },
+          (err, xForms) => {
+            if (err) {
+              return console.error('Error fetching form definitions', err);
+            }
+            const xFormSummaries = xForms.map(function(xForm) {
+              return {
+                id: xForm._id,
+                code: xForm.internalId,
+                title: translateTitle(xForm.translation_key, xForm.title),
+                icon: xForm.icon,
+                subjectKey: xForm.subject_key
+              };
+            });
+            const forms = xFormSummaries.concat(jsonFormSummaries);
+            this.globalActions.setForms(forms);
+          }
+        );
+
+        // Get forms for training cards and display the cards if necessary
+        this.trainingCardsService.initTrainingCards();
+      })
+      .catch(err => console.error('Failed to retrieve forms', err));
+  }
+
+  private setAppTitle() {
+    this.customResourceService
+      .getAppTitle()
+      .then(title => {
+        document.title = title;
+        $('.header-logo').attr('title', `${title}`);
+      });
+  }
+
+  private showSessionExpired() {
+    this.modalService.show(SessionExpiredComponent);
+  }
+
+  private showUpdateReady() {
+    const TWO_HOURS = 2 * 60 * 60 * 1000;
+    this.modalService
+      .show(ReloadingComponent)
+      .afterClosed()
+      .pipe(take(1))
+      .subscribe(reloaded => {
+        if (reloaded) {
+          return;
+        }
+        console.debug('Delaying update');
+        setTimeout(() => this.showUpdateReady(), TWO_HOURS);
+      });
+    this.closeDropdowns();
+  }
+
+  private checkPrivacyPolicy() {
+    return this.privacyPoliciesService
+      .hasAccepted()
+      .then(({ privacyPolicy, accepted }: any = {}) => {
+        this.globalActions.setPrivacyPolicyAccepted(accepted);
+        this.globalActions.setShowPrivacyPolicy(privacyPolicy);
+      })
+      .catch(err => console.error('Failed to load privacy policy', err));
+  }
+
+  private initBubbleCounter() {
+    this.unreadRecordsService.init((err, data) => {
+      if (err) {
+        console.error('Error fetching read status', err);
+        return;
+      }
+      this.globalActions.setBubbleCounter(data);
+    });
+  }
+
+  private initRulesEngine() {
+    return this.rulesEngineService
+      .isEnabled()
+      .then(isEnabled => console.info(`RulesEngine Status: ${isEnabled ? 'Enabled' : 'Disabled'}`))
+      .catch(err => {
+        console.error('RuleEngine failed to initialize', err);
+      });
+  }
+
+  private startRecurringProcesses() {
+    this.recurringProcessManagerService.startUpdateRelativeDate();
+
+    if (this.sessionService.isOnlineOnly()) {
+      this.recurringProcessManagerService.startUpdateReadDocsCount();
+    }
+  }
+
+  private startWealthQuintiles() {
+    this.authService
+      .has('can_write_wealth_quintiles')
+      .then(canWriteQuintiles => {
+        if (canWriteQuintiles) {
+          this.wealthQuintilesWatcherService.start();
+        }
+      });
+  }
+
+  // close select2 dropdowns in the background
+  private closeDropdowns() {
+    $('select.select2-hidden-accessible').each((idx, element) => {
+      // prevent errors being thrown if selectors have not been
+      // initialised yet
+      try {
+        $(element).select2('close');
+      } catch (_) {
+        // exception thrown on clicking 'close'
+      }
+    });
+  }
+
+  private async warnOutdatedChrome(): Promise<void> {
+    if (!this.browserDetectorService.isUsingOutdatedBrowser()) {
+      return;
+    }
+    await this.translationsLoaded;
+    this.modalService.show(BrowserCompatibilityComponent);
+  }
+
+  private recordStartupTelemetry() {
+    window.startupTimes.angularBootstrapped = performance.now();
+    this.performanceService.recordPerformance(
+      { name: 'boot_time:1:to_first_code_execution' },
+      window.startupTimes.firstCodeExecution - window.startupTimes.start
+    );
+
+    if (window.startupTimes.replication) {
+      this.performanceService.recordPerformance(
+        { name: 'boot_time:2_1:to_replication' },
+        window.startupTimes.replication,
+      );
+    }
+
+    if (window.startupTimes.purgingMetaFailed) {
+      console.error(`Error when purging meta on device startup: ${window.startupTimes.purgingMetaFailed}`);
+      this.telemetryService.record('boot_time:purging_meta_failed');
+    } else {
+      // When: 1- Purging ran and successfully completed. 2- Purging didn't run.
+      this.telemetryService.record(`boot_time:purging_meta:${!!window.startupTimes.purgingMeta}`);
+    }
+
+    if (window.startupTimes.purgeMeta) {
+      this.performanceService.recordPerformance(
+        { name: 'boot_time:2_3:to_purge_meta' },
+        window.startupTimes.purgeMeta,
+      );
+    }
+
+    this.performanceService.recordPerformance(
+      { name: 'boot_time:2:to_bootstrap' },
+      window.startupTimes.bootstrapped - window.startupTimes.firstCodeExecution,
+    );
+
+    this.performanceService.recordPerformance(
+      { name: 'boot_time:3:to_angular_bootstrap' },
+      window.startupTimes.angularBootstrapped - window.startupTimes.bootstrapped,
+    );
+
+    this.performanceService.recordPerformance(
+      { name: 'boot_time', recordApdex: true },
+      window.startupTimes.angularBootstrapped - window.startupTimes.start
+    );
+  }
+
+  @HostListener('window:beforeunload')
+  private stopWatchingChanges() {
+    // avoid Failed to fetch errors being logged when the browser window is reloaded
+    this.changesService.killWatchers();
+  }
+
+  @HostListener('window:visibilitychange')
+  private onVisibilityChange() {
+    this.interactionTrackingService.persistBuffer();
+  }
+
+  @HostListener('window:pageshow', ['$event'])
+  private pageshow(event) {
+    if (event.persisted) {
+      this.sessionService.check();
+    }
+  }
+
+  private async initAnalyticsModules() {
+    try {
+      const modules = await this.analyticsModulesService.get();
+      this.analyticsActions.setAnalyticsModules(modules);
+    } catch (error) {
+      console.error('Error while initializing analytics modules', error);
+    }
+  }
+}

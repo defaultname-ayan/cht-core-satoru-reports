@@ -1,0 +1,323 @@
+const DEFAULT_BUILDS_URL = 'https://staging.dev.medicmobile.org/_couch/builds_4';
+
+angular.module('controllers').controller('UpgradeCtrl',
+  function(
+    $http,
+    $log,
+    $q,
+    $scope,
+    $state,
+    $timeout,
+    $translate,
+    Modal,
+    Version,
+    pouchDB
+  ) {
+
+    'use strict';
+    'ngInject';
+
+    $scope.loading = true;
+    $scope.versions = {};
+    $scope.upgraded = $state.params.upgraded;
+    $scope.canUpgrade = false;
+
+    const UPGRADE_URL = '/api/v2/upgrade';
+    const POLL_URL = '/setup/poll';
+    const UPGRADE_POLL_FREQ = 2000;
+    const BUILD_LIST_LIMIT = 50;
+    const UPGRADE_CONTAINER_WAIT_PERIOD = 3 * 60 * 1000; // 3 minutes
+
+    let containerWaitPeriodTimeout;
+    let apiBuildsUrl;
+    let buildsDb;
+
+    const logError = (error, key) => {
+      return $translate
+        .onReady()
+        .then(() => $translate(key))
+        .then((msg) => {
+          $log.error(msg, error);
+          $scope.error = msg;
+        });
+    };
+
+    const getExistingDeployment = (expectUpgrade, expectedVersion) => {
+      return $http
+        .get('/api/deploy-info')
+        .then(({ data: deployInfo }) => {
+          if (expectUpgrade) {
+            if (expectedVersion === deployInfo.build) {
+              return reloadPage();
+            }
+            $log.error('expected version', expectedVersion, 'does not match current version', deployInfo.build);
+            logError('instance.upgrade.error.deploy', 'instance.upgrade.error.deploy');
+          }
+          $scope.currentDeploy = deployInfo;
+          const currentVersion = Version.currentVersion($scope.currentDeploy);
+          $scope.isUsingFeatureRelease = !!currentVersion && typeof currentVersion.featureRelease !== 'undefined';
+        })
+        .catch(err => logError(err, 'instance.upgrade.error.deploy_info_fetch'));
+    };
+
+    const displayErrorAfterWait = (err) => {
+      if (containerWaitPeriodTimeout) {
+        return;
+      }
+      containerWaitPeriodTimeout = $timeout(() => {
+        logError(err, 'instance.upgrade.error.get_upgrade');
+      }, UPGRADE_CONTAINER_WAIT_PERIOD);
+    };
+
+    const getCanUpgrade = () => {
+      return $http
+        .get(`${UPGRADE_URL}/can-upgrade`)
+        .then(response => {
+          $scope.canUpgrade = response.data.ok;
+        })
+        .catch(err => {
+          $log.error('Error when checking if upgrades are possible', err);
+        });
+    };
+
+    const getCurrentUpgrade = () => {
+      return $http
+        .get(UPGRADE_URL)
+        .then(({ data: { upgradeDoc, indexers, buildsUrl } }) => {
+          if ($scope.upgradeDoc && !upgradeDoc) {
+            const expectedVersion = $scope.upgradeDoc.to && $scope.upgradeDoc.to.build;
+            getExistingDeployment(true, expectedVersion);
+          }
+
+          $scope.upgradeDoc = upgradeDoc;
+          $scope.indexerProgress = indexers;
+          apiBuildsUrl = buildsUrl;
+
+          if (upgradeDoc) {
+            $timeout(getCurrentUpgrade, UPGRADE_POLL_FREQ);
+          } else {
+            $timeout.cancel(containerWaitPeriodTimeout);
+          }
+
+          $scope.error = undefined;
+        })
+        .catch(err => {
+          $timeout(getCurrentUpgrade, UPGRADE_POLL_FREQ);
+          displayErrorAfterWait(err);
+        });
+    };
+
+    const getBuilds = (options) => {
+      options.descending = true;
+      options.limit = BUILD_LIST_LIMIT;
+
+      return buildsDb
+        .query('builds/releases', options)
+        .then((results) => {
+          return results.rows.map(row => {
+            if (!row.value.version) {
+              row.value.version = row.id.replace(/^medic:medic:/, '');
+            }
+            return row.value;
+          });
+        });
+    };
+
+    const loadBuilds = () => {
+      const minVersion = Version.minimumNextRelease($scope.currentDeploy.version);
+      buildsDb = buildsDb || pouchDB(apiBuildsUrl || DEFAULT_BUILDS_URL);
+
+      // NB: Once our build server is on CouchDB 2.0 we can combine these three calls
+      //     See: http://docs.couchdb.org/en/2.0.0/api/ddoc/views.html#sending-multiple-queries-to-a-view
+      return $q
+        .all([
+          getBuilds({
+            startkey: [ 'branch', 'medic', 'medic', {}],
+            endkey: [ 'branch', 'medic', 'medic'],
+          }),
+          getBuilds({
+            startkey: [ 'beta', 'medic', 'medic', {}],
+            endkey: [ 'beta', 'medic', 'medic', minVersion.major, minVersion.minor, minVersion.patch, minVersion.beta ],
+          }),
+          getBuilds({
+            startkey: [ 'release', 'medic', 'medic', {}],
+            endkey: [ 'release', 'medic', 'medic', minVersion.major, minVersion.minor, minVersion.patch],
+          }),
+          $scope.isUsingFeatureRelease ? getBuilds({
+            startkey: [ minVersion.featureRelease, 'medic', 'medic', {} ],
+            endkey: [
+              minVersion.featureRelease,
+              'medic',
+              'medic',
+              minVersion.major,
+              minVersion.minor,
+              minVersion.patch,
+              minVersion.beta,
+            ],
+          }) : [],
+        ])
+        .then(([ branches, betas, releases, featureReleases ]) => {
+          $scope.versions = { branches, betas, releases, featureReleases };
+        });
+    };
+
+    const loadBuildsCompare = () => {
+      if (!$scope.versions.releases) {
+        return;
+      }
+      let series = Promise.resolve();
+      $scope.versions.releases.forEach(release => series = series.then(() => $scope.compareReleases(release)));
+      $scope.versions.betas.forEach(release => series = series.then(() => $scope.compareReleases(release)));
+      return series;
+    };
+
+
+    $scope.setupPromise = $q
+      .all([
+        getExistingDeployment(),
+        getCurrentUpgrade(),
+        getCanUpgrade(),
+      ])
+      .then(() => {
+        if (!$scope.currentDeploy) {
+          // invalid deploy??
+          return;
+        }
+
+        if ($scope.upgradeDoc) {
+          // Upgrade in progress, don't bother loading builds
+          return;
+        }
+
+        return loadBuilds();
+      })
+      .catch((err) => logError(err, 'instance.upgrade.error.version_fetch'))
+      .then(() => {
+        $scope.loading = false;
+      })
+      .then(() => loadBuildsCompare());
+
+    $scope.potentiallyIncompatible = (release) => {
+      // Old builds may not have a base version, which means unless their version
+      // is in the form 1.2.3[-maybe.4] (ie it's a branch), we can't tell and will
+      // just presume maybe it's bad
+      if (!release.base_version && !Version.parse(release.version)) {
+        return true;
+      }
+
+      const currentVersion = Version.parse($scope.currentDeploy.base_version || $scope.currentDeploy.version);
+      if (!currentVersion) {
+        // Unable to parse the current version information, so all releases are
+        // potentially incompatible
+        return true;
+      }
+
+      const releaseVersion = Version.parse(release.base_version || release.version);
+      return Version.compare(currentVersion, releaseVersion) > 0;
+    };
+
+    const reloadPage = () => {
+      $state.go('upgrade', { upgraded: true }, { reload: true });
+    };
+
+    $scope.upgrade = (build, action) => {
+      const stageOnly = action === 'stage';
+      const upgradeBuild = Object.assign({}, build);
+      delete upgradeBuild.compare;
+      delete upgradeBuild.requiresIndexing;
+
+      return $scope
+        .compareReleases(build)
+        .then(() => Modal({
+          templateUrl: 'templates/upgrade_confirm.html',
+          controller: 'UpgradeConfirmCtrl',
+          model: {
+            stageOnly,
+            build,
+            before: $scope.currentDeploy.version,
+            after: build.version,
+            confirmCallback: () => upgrade(upgradeBuild, action),
+            errorKey: 'instance.upgrade.error.compare',
+          }
+        })).catch(() => {});
+    };
+
+    const waitUntilApiStarts = () => new Promise((resolve) => {
+      const pollApi = () => $http
+        .get(POLL_URL)
+        .then(() => resolve())
+        .catch(() => $timeout(pollApi, 1000));
+      pollApi();
+    });
+
+    const upgrade = (build, action) => {
+      $scope.error = false;
+
+      const url = action ? `${UPGRADE_URL}/${action}` : UPGRADE_URL;
+
+      return $http
+        .post(url, { build })
+        .catch(err => {
+          // exclude "50x" like statuses that come from nginx
+          const requestFailedStatuses = [-1, 502, 503];
+          if (err && (!err.status || requestFailedStatuses.includes(err.status)) && action === 'complete') {
+            // refresh page after containers are back up
+            return waitUntilApiStarts().then(() => reloadPage());
+          }
+          return logError(err, 'instance.upgrade.error.deploy');
+        })
+        .then(() => getCurrentUpgrade());
+    };
+
+    $scope.abortUpgrade = () => {
+      if (!$scope.upgradeDoc) {
+        return;
+      }
+
+      const confirmCallback = () => abortUpgrade();
+
+      return Modal({
+        templateUrl: 'templates/upgrade_abort.html',
+        controller: 'UpgradeConfirmCtrl',
+        model: {
+          before: $scope.currentDeploy.version,
+          after: $scope.upgradeDoc.to && $scope.upgradeDoc.to.version,
+          confirmCallback,
+          errorKey: 'instance.upgrade.error.abort',
+        }
+      }).catch(() => {});
+    };
+
+    $scope.retryUpgrade = () => {
+      if (!$scope.upgradeDoc) {
+        return;
+      }
+      const action = $scope.upgradeDoc.action === 'stage' ? 'stage' : undefined;
+      return $scope.upgrade($scope.upgradeDoc.to, action);
+    };
+
+    $scope.compareReleases = (build) => {
+      const url = `${UPGRADE_URL}/compare`;
+      if (build.compare) {
+        return $q.resolve();
+      }
+
+      return $http
+        .post(url, { build })
+        .then(({ data }) => {
+          build.compare = data;
+          build.requiresIndexing = data.some(difference => difference.indexing);
+        })
+        .catch(error => {
+          $log.error('Failed to compare releases', error);
+        });
+    };
+
+    const abortUpgrade = () => {
+      return $http
+        .delete(UPGRADE_URL)
+        .then(() => getCurrentUpgrade())
+        .then(() => loadBuilds())
+        .then(() => loadBuildsCompare());
+    };
+  });

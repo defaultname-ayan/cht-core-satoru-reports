@@ -1,0 +1,634 @@
+const moment = require('moment');
+const passwordTester = require('simple-password-tester');
+const phoneNumber = require('@medic/phone-number');
+const constants = require('@medic/constants');
+const USER_ROLES = constants.USER_ROLES;
+const PASSWORD_MINIMUM_LENGTH = 8;
+const PASSWORD_MINIMUM_SCORE = 50;
+const SHOW_PASSWORD_ICON = '/login/images/show-password.svg';
+const HIDE_PASSWORD_ICON = '/login/images/hide-password.svg';
+const USERNAME_ALLOWED_CHARS = /^[a-z0-9_-]+$/;
+const ADMIN_ROLE = USER_ROLES.COUCHDB_ADMIN;
+const FIELDS_TO_IGNORE = [
+  'currentPassword',
+  'passwordConfirm',
+  'facilitySelect',
+  'contactSelect',
+  'tokenLoginEnabled',
+];
+
+angular
+  .module('controllers')
+  .controller('EditUserCtrl', function(
+    $http,
+    $log,
+    $q,
+    $rootScope,
+    $scope,
+    $translate,
+    $uibModalInstance,
+    ContactTypes,
+    CreateUser,
+    DB,
+    DataContext,
+    Select2Search,
+    Settings,
+    Translate,
+    UpdateUser
+  ) {
+    'use strict';
+    'ngInject';
+
+    const datasourcePromise = DataContext.then(dataContext => dataContext.getDatasource());
+    $scope.cancel = () => $uibModalInstance.dismiss();
+
+    const getRoles = roles => {
+      if (!roles || !roles.length) {
+        return [];
+      }
+      if (roles.indexOf(ADMIN_ROLE) !== -1) {
+        return [ ADMIN_ROLE ];
+      }
+      if (!$scope.roles) {
+        // no configured roles
+        return [];
+      }
+      // find all the users roles that are specified in the configuration
+      return roles.filter(function(role) {
+        return !!$scope.roles[role];
+      });
+    };
+
+    const validateSkipPasswordPermission = datasource => {
+      $scope.skipPasswordChange = datasource.v1.hasPermissions(
+        ['can_skip_password_change'],
+        $scope.editUserModel.roles
+      );
+    };
+
+    const formatDate = (settings, date) => {
+      const format = settings.reported_date_format || 'DD-MMM-YYYY HH:mm:ss';
+      return moment(date).format(format);
+    };
+
+    const allowTokenLogin = settings => settings.token_login && settings.token_login.enabled;
+    const allowSSOLogin = settings => settings.oidc_provider;
+
+    /**
+     * Ensures that facility_id is an array for backward compatibility.
+     * @returns {Array} The normalized facility_id as an array.
+     */
+    const getFacilityId = function () {
+      if (!$scope.model.facility_id) {
+        $scope.model.facility_id = [];
+      }
+
+      if (!Array.isArray($scope.model.facility_id)) {
+        $scope.model.facility_id = [$scope.model.facility_id];
+      }
+
+      return $scope.model.facility_id;
+    };
+
+    const getOidcUsername = function () {
+      if (
+        !$scope.model
+        || !$scope.model._id
+        || !$scope.model.name
+        || !$scope.model.oidc_login
+      ) {
+        return Promise.resolve(undefined);
+      }
+
+      return $http
+        .get(`/api/v2/users/${$scope.model.name}`)
+        .then(({ data: { oidc_username } }) => oidc_username);
+    };
+
+    const determineEditUserModel = function() {
+      // Edit a user that's not the current user.
+      // $scope.model is the user object passed in by controller creating the Modal.
+      // If $scope.model === {}, we're creating a new user.
+      return $q.all([Settings(), getOidcUsername()])
+        .then(([settings, oidcUsername]) => {
+          $scope.settings = settings;
+          $scope.roles = settings.roles;
+          $scope.allowTokenLogin = allowTokenLogin(settings);
+          $scope.allowSSOLogin = allowSSOLogin(settings);
+          if (!$scope.model) {
+            return $q.resolve({});
+          }
+
+          // Start with the password masked.
+          $scope.model.passwordFieldType = 'password';
+
+          $scope.model.showPasswordIcon = SHOW_PASSWORD_ICON;
+          $scope.model.hidePasswordIcon = HIDE_PASSWORD_ICON;
+          $scope.model.oidc_username = oidcUsername;
+          const facilityId = getFacilityId();
+          const tokenLoginData = $scope.model.token_login;
+          const tokenLoginEnabled = tokenLoginData &&
+            {
+              expirationDate: formatDate(settings, tokenLoginData.expiration_date),
+              active: tokenLoginData.active,
+              loginDate: tokenLoginData.login_date && formatDate(settings, tokenLoginData.login_date),
+              expired: tokenLoginData.expiration_date <= new Date().getTime(),
+            };
+
+          const m = {
+            id: $scope.model._id,
+            username: $scope.model.name,
+            fullname: $scope.model.fullname,
+            email: $scope.model.email,
+            phone: $scope.model.phone,
+            // FacilitySelect is what binds to the select, place is there to
+            // compare to later to see if it's changed once we've run computeFields();
+            facilitySelect: facilityId,
+            place: facilityId,
+            roles: getRoles($scope.model.roles),
+            // ^ Same with contactSelect vs. contact
+            contactSelect: $scope.model.contact_id,
+            contact: $scope.model.contact_id,
+            tokenLoginEnabled: tokenLoginEnabled,
+            passwordFieldType: $scope.model.passwordFieldType,
+            showPasswordIcon: $scope.model.showPasswordIcon,
+            hidePasswordIcon: $scope.model.hidePasswordIcon,
+            oidc_username: $scope.model.oidc_username,
+          };
+          return $q.resolve(m);
+        });
+    };
+
+    const fetchDocsByIds = (ids) => {
+      return DB()
+        .allDocs({ keys: ids, include_docs: true });
+    };
+
+    const usersPlaces = (ids) => {
+      return fetchDocsByIds(ids)
+        .then((docs) => processDocs(docs))
+        .then((filteredDocs) => filteredDocs.map((doc) => doc._id));
+    };
+
+    const processDocs = function (result) {
+      return result.rows
+        .filter((row) => row.doc && !row.value.deleted)
+        .map((row) => row.doc);
+    };
+
+    this.setupPromise = $q.all([determineEditUserModel(), datasourcePromise])
+      .then(([model, datasource]) => {
+        $scope.editUserModel = model;
+        validateSkipPasswordPermission(datasource);
+        populateFacilitynContact();
+      })
+      .catch(err => {
+        $log.error('Error determining user model', err);
+      });
+
+    const populateFacilitynContact = () => {
+      $uibModalInstance.rendered
+        .then(() => ContactTypes.getAll())
+        .then(contactTypes => {
+          // only the #edit-user-profile modal has these fields
+          const personTypes = contactTypes.filter(type => type.person).map(type => type.id);
+
+          const placeTypes = contactTypes.filter(type => !type.person).map(type => type.id);
+
+          return usersPlaces($scope.editUserModel.facilitySelect).then(facilityIds => {
+            Select2Search($('#edit-user-profile [name=contactSelect]'), personTypes);
+            Select2Search($('#edit-user-profile [name=facilitySelect]'), placeTypes, { initialValue: facilityIds });
+          });
+        });
+    };
+
+    const validateRequired = (fieldName, fieldDisplayName) => {
+      if (!$scope.editUserModel[fieldName]) {
+        Translate.fieldIsRequired(fieldDisplayName).then(function (value) {
+          $scope.errors[fieldName] = value;
+        });
+        return false;
+      }
+      return true;
+    };
+
+    const validateTokenLogin = () => {
+      if (!$scope.editUserModel.token_login) {
+        return $q.resolve(true);
+      }
+
+      return Settings().then(settings => {
+        const phone = $scope.editUserModel.phone;
+        if (!phoneNumber.validate(settings, phone)) {
+          $translate('configuration.enable.token.login.phone').then(value => {
+            $scope.errors.phone = value;
+          });
+          return false;
+        }
+
+        if (!$scope.allowSSOLogin && $scope.editUserModel.oidc_username) {
+          // Automatically disable OIDC when SSO login is not enabled
+          $scope.editUserModel.oidc_username = '';
+        }
+        return true;
+      });
+    };
+
+    const validatePasswordForEditUser = () => {
+      const newUser = !$scope.editUserModel.id;
+      const tokenLogin = $scope.editUserModel.token_login;
+      const oidcUsername = $scope.editUserModel.oidc_username;
+      if (tokenLogin || (oidcUsername && $scope.allowSSOLogin)) {
+        // when enabling token_login or sso_login, password is not required
+        // if user had populated before enabling token/sso, remove assigned password
+        $scope.editUserModel.password = '';
+        $scope.editUserModel.passwordConfirm = '';
+        return true;
+      }
+
+      if (newUser || tokenLogin === false || oidcUsername === '') {
+        // for new users or when disabling token_login for users who have it enabled
+        return validatePasswordFields();
+      }
+
+      // if existing user : needs both fields, or none
+      if (
+        $scope.editUserModel.password ||
+        $scope.editUserModel.passwordConfirm
+      ) {
+        return validatePasswordFields();
+      }
+      return true;
+    };
+
+    const validateConfirmPasswordMatches = () => {
+      if (
+        $scope.editUserModel.password !== $scope.editUserModel.passwordConfirm
+      ) {
+        $translate('Passwords must match').then(function(value) {
+          $scope.errors.password = value;
+        });
+        return false;
+      }
+      return true;
+    };
+
+    const validatePasswordStrength = () => {
+      const password = $scope.editUserModel.password || '';
+      if (password.length < PASSWORD_MINIMUM_LENGTH) {
+        $translate('password.length.minimum', {
+          minimum: PASSWORD_MINIMUM_LENGTH,
+        }).then(value => {
+          $scope.errors.password = value;
+        });
+        return false;
+      }
+      if (passwordTester(password) < PASSWORD_MINIMUM_SCORE) {
+        $translate('password.weak').then(value => {
+          $scope.errors.password = value;
+        });
+        return false;
+      }
+      return true;
+    };
+
+    const validatePasswordFields = () => {
+      if (!$scope.allowSSOLogin && $scope.editUserModel.oidc_username) {
+        // Automatically disable OIDC when SSO login is not enabled
+        $scope.editUserModel.oidc_username = '';
+      }
+      return (
+        validateRequired('password', 'Password') &&
+        (!$scope.editUserModel.currentPassword ||
+          validateRequired('currentPassword', 'Current Password')) &&
+        validatePasswordStrength() &&
+        validateConfirmPasswordMatches()
+      );
+    };
+
+    const validateName = () => {
+      if ($scope.editUserModel.id) {
+        // username is readonly when editing so ignore it
+        return true;
+      }
+      if (!validateRequired('username', 'User Name')) {
+        return false;
+      }
+      if (!USERNAME_ALLOWED_CHARS.test($scope.editUserModel.username)) {
+        $translate('username.invalid').then(value => {
+          $scope.errors.username = value;
+        });
+        return false;
+      }
+      return true;
+    };
+
+    const validatePlacesPermission = datasource => {
+      if (!$scope.editUserModel.place || $scope.editUserModel.place.length <= 1) {
+        return true;
+      }
+
+      const userHasPermission = datasource.v1.hasPermissions(
+        ['can_have_multiple_places'],
+        $scope.editUserModel.roles
+      );
+
+      if (!userHasPermission) {
+        $translate('permission.description.can_have_multiple_places.not_allowed').then(value => {
+          $scope.errors.multiFacility = value;
+        });
+      }
+      return userHasPermission;
+    };
+
+    const isOnlineUser = (roles) => {
+      if (!$scope.roles) {
+        return true;
+      }
+      for (const [name, role] of Object.entries($scope.roles)) {
+        if (role.offline && roles.includes(name)) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    const validateContactAndFacility = () => {
+      const isOnline = isOnlineUser($scope.editUserModel.roles);
+      if (isOnline) {
+        return !$scope.editUserModel.contact || validateRequired('place', 'Facility');
+      }
+      const hasPlace = validateRequired('place', 'Facility');
+      const hasContact = validateRequired('contact', 'associated.contact');
+      return hasPlace && hasContact;
+    };
+
+    const validateFacilityHierarchy = () => {
+      const placeIds = $scope.editUserModel.place;
+
+      if (!placeIds || placeIds.length === 1) {
+        return $q.resolve(true);
+      }
+
+      return fetchDocsByIds(placeIds)
+        .then(result => {
+          const places = result.rows.map(row => row.doc);
+          const isSameHierarchy = ContactTypes.isSameContactType(places);
+
+          if (!isSameHierarchy) {
+            $translate('permission.description.can_have_multiple_places.incompatible_place').then(value => {
+              $scope.errors.multiFacility = value;
+            });
+          }
+          return isSameHierarchy;
+        })
+        .catch(err => {
+          $log.error('Error validating facility hierarchy', err);
+          return false;
+        });
+    };
+
+    const validateContactIsInPlace = datasource => {
+      const placeIds = $scope.editUserModel.place;
+      const contactId = $scope.editUserModel.contact;
+      if (!placeIds || !contactId) {
+        return $q.resolve(true);
+      }
+
+      const getParent = contactId => datasource.v1.contact
+        .getByUuid(contactId)
+        .then(contact => contact.parent);
+
+      const checkParent = (parent, placeIds) => {
+        if (!parent) {
+          return false;
+        }
+        if (placeIds.includes(parent._id)) {
+          return true;
+        }
+        return checkParent(parent.parent, placeIds);
+      };
+
+      return getParent(contactId)
+        .then(function (parent) {
+          const valid = checkParent(parent, placeIds);
+          if (!valid) {
+            $translate('configuration.user.place.contact').then(value => {
+              $scope.errors.contact = value;
+            });
+          }
+          return valid;
+        })
+        .catch(err => {
+          $log.error(
+            'Error trying to validate contact. Trying to save anyway.',
+            err
+          );
+          return true;
+        });
+    };
+
+    const validateRole = () => {
+      const roles = $scope.editUserModel.roles || [];
+      if (!roles.length) {
+        Translate.fieldIsRequired('configuration.role')
+          .then(function(value) {
+            $scope.errors.roles = value;
+          });
+        return false;
+      }
+      return true;
+    };
+
+    const getUpdatedKeys = (model, existingModel) => {
+      return Object.keys(model).filter(key => {
+        if (key === 'id') {
+          return false;
+        }
+        if (key === 'password') {
+          return model.password && model.password !== '';
+        }
+        if (key === 'roles') {
+          const updated = model.roles ? model.roles.sort() : [];
+          const existing = existingModel.roles ? existingModel.roles.sort() : [];
+          if (updated.length !== existing.length) {
+            return true;
+          }
+          return !updated.every((role, i) => role === existing[i]);
+        }
+        if (FIELDS_TO_IGNORE.includes(key)) {
+          // We don't want to return these 'meta' fields
+          return false;
+        }
+
+        return existingModel[key] !== model[key];
+      });
+    };
+
+    const changedUpdates = model => {
+      return determineEditUserModel()
+        .then(existingModel => {
+          const updates = {};
+          getUpdatedKeys(model, existingModel).forEach(key => {
+            updates[key] = model[key];
+          });
+
+          return updates;
+        });
+    };
+
+    let previousQuery;
+    const validateReplicationLimit = () => {
+      const isOnline = isOnlineUser($scope.editUserModel.roles);
+      if (isOnline) {
+        return $q.resolve();
+      }
+
+      const query = {
+        role: $scope.editUserModel.roles,
+        facility_id: $scope.editUserModel.place,
+        contact_id: $scope.editUserModel.contact
+      };
+
+      if (previousQuery && JSON.stringify(query) === previousQuery) {
+        return $q.resolve();
+      }
+
+      previousQuery = JSON.stringify(query);
+      return $http
+        .get('/api/v1/users-info', { params: query })
+        .then(resp => {
+          if (resp.data.warn) {
+            return $q.reject({
+              key: 'configuration.user.replication.limit.exceeded',
+              params: { total_docs: resp.data.warn_docs, limit: resp.data.limit },
+              severity: 'warning'
+            });
+          }
+
+          previousQuery = null;
+        });
+    };
+
+    const computeFields = () => {
+      const placeValue = $('#edit-user-profile [name=facilitySelect]').val();
+      $scope.editUserModel.place = Array.isArray(placeValue) && placeValue.length === 0 ? null : placeValue;
+      $scope.editUserModel.contact = $(
+        '#edit-user-profile [name=contactSelect]'
+      ).val();
+    };
+
+    const haveUpdates = updates => Object.keys(updates).length;
+
+    const validateEmailAddress = () => {
+      if (!$scope.editUserModel.email){
+        return true;
+      }
+
+      if (!isEmailValid($scope.editUserModel.email)){
+        $translate('email.invalid').then(value => $scope.errors.email = value);
+        return false;
+      }
+
+      return true;
+    };
+
+    const isEmailValid = email => email.match(/.+@.+/);
+
+    const updateUser = () => {
+      return changedUpdates($scope.editUserModel)
+        .then(updates => {
+          if (!haveUpdates(updates)) {
+            return;
+          }
+
+          if ($scope.editUserModel.id) {
+            return UpdateUser($scope.editUserModel.username, updates);
+          }
+
+          return CreateUser.createSingleUser(updates);
+        })
+        .then(() => {
+          $scope.setFinished();
+          // TODO: change this from a broadcast to a changes watcher
+          //       https://github.com/medic/medic/issues/4094
+          $rootScope.$broadcast(
+            'UsersUpdated',
+            $scope.editUserModel.id
+          );
+          $uibModalInstance.close();
+        })
+        .catch(err => {
+          if (err && err.data && err.data.error && err.data.error.translationKey) {
+            $translate(err.data.error.translationKey, err.data.error.translationParams).then(function(value) {
+              $scope.setError(err, value);
+            });
+          } else {
+            $scope.setError(err, 'Error updating user');
+          }
+        });
+    };
+
+    $scope.toggleRole = (role) => {
+      const index = $scope.editUserModel.roles.indexOf(role);
+      if (index === -1) {
+        $scope.editUserModel.roles.push(role);
+      } else {
+        $scope.editUserModel.roles.splice(index, 1);
+      }
+    };
+
+    // Mask or show the password.
+    $scope.togglePasswordMasking = () => {
+      $scope.editUserModel.passwordFieldType = $scope.editUserModel.passwordFieldType ===
+      'password' ? 'text' : 'password';
+    };
+
+    const runValidations = datasource => {
+      const synchronousValidations = validateName() &&
+                                     validateRole() &&
+                                     validateContactAndFacility() &&
+                                     validatePasswordForEditUser() &&
+                                     validateEmailAddress() &&
+                                     validatePlacesPermission(datasource);
+
+      if (!synchronousValidations) {
+        $scope.setError();
+        return;
+      }
+
+      return $q
+        .all([
+          validateFacilityHierarchy(),
+          validateContactIsInPlace(datasource),
+          validateTokenLogin(),
+        ])
+        .then(responses => responses.every(Boolean))
+        .then(valid => {
+          if (!valid) {
+            $scope.setError();
+            return;
+          }
+
+          return validateReplicationLimit().then(() => updateUser());
+        });
+    };
+
+    // #edit-user-profile is the admin view, which has additional fields.
+    $scope.editUser = () => {
+      $scope.setProcessing();
+      $scope.errors = {};
+      computeFields();
+
+      return datasourcePromise
+        .then(runValidations)
+        .catch(err => {
+          if (err.key) {
+            $translate(err.key, err.params).then(value => $scope.setError(err, value, err.severity));
+          } else {
+            $scope.setError(err, 'Error validating user');
+          }
+        });
+
+    };
+  });

@@ -1,0 +1,190 @@
+const chai = require('chai');
+const sinon = require('sinon');
+const migrations = require('../../src/migrations');
+const db = require('../../src/db');
+const { DOC_IDS } = require('@medic/constants');
+
+describe('migrations', () => {
+
+  afterEach(() => {
+    sinon.restore();
+  });
+
+  it('run fails if migration does not have created date', () => {
+    sinon.stub(db.medic, 'get').resolves({});
+    sinon.stub(migrations, 'get').resolves([ { name: 'xyz' } ]);
+    return migrations.run().catch(err => {
+      chai.expect(err.message).to.equal('Migration "xyz" has no "created" date property');
+    });
+  });
+
+  it('run does nothing if all migrations have run', () => {
+    const log = { migrations: [ 'xyz' ] };
+    const getLog = sinon.stub(db.medic, 'get').resolves(log);
+    sinon.stub(migrations, 'get').resolves([ { name: 'xyz' } ]);
+    return migrations.run().then(() => {
+      chai.expect(getLog.callCount).to.equal(1);
+      chai.expect(getLog.args[0][0]).to.equal(DOC_IDS.MIGRATION_LOG);
+    });
+  });
+
+  it('executes migrations that have not run and updates meta', () => {
+    const migration = [
+      {
+        name: 'xyz',
+        created: new Date(2015, 1, 1, 1, 0, 0, 0),
+        run: () => Promise.resolve()
+      },
+      {
+        name: 'abc',
+        created: new Date(2015, 1, 1, 2, 0, 0, 0),
+        run: () => Promise.reject(new Error('should not be called'))
+      }
+    ];
+    const log = { _id: DOC_IDS.MIGRATION_LOG, migrations: [ 'abc' ], type: 'meta' };
+    const getLog = sinon.stub(db.medic, 'get').resolves(log);
+    sinon.stub(migrations, 'get').resolves(migration);
+    const put = sinon.stub(db.medic, 'put').resolves({});
+    return migrations.run().then(() => {
+      chai.expect(getLog.callCount).to.equal(2);
+      chai.expect(put.callCount).to.equal(1);
+      chai.expect(put.firstCall.args[0]).to.deep.equal({
+        _id: DOC_IDS.MIGRATION_LOG,
+        migrations: [ 'abc', 'xyz' ],
+        type: 'meta'
+      });
+    });
+  });
+
+  it('executes multiple migrations that have not run and updates meta each time', () => {
+    const migration = [
+      {
+        name: 'xyz',
+        created: new Date(2015, 1, 1, 1, 0, 0, 0),
+        run: () => Promise.resolve()
+      },
+      {
+        name: 'abc',
+        created: new Date(2015, 1, 1, 2, 0, 0, 0),
+        run: () => Promise.resolve()
+      }
+    ];
+    const getLog = sinon.stub(db.medic, 'get');
+    getLog.onCall(0).resolves({ _id: DOC_IDS.MIGRATION_LOG, type: 'meta', migrations: [ ] });
+    getLog.onCall(1).resolves({ _id: DOC_IDS.MIGRATION_LOG, type: 'meta', migrations: [ ] });
+    getLog.onCall(2).resolves({ _id: DOC_IDS.MIGRATION_LOG, type: 'meta', migrations: [ 'xyz' ] });
+    sinon.stub(migrations, 'get').resolves(migration);
+    const put = sinon.stub(db.medic, 'put').resolves({});
+    return migrations.run().then(() => {
+      chai.expect(getLog.callCount).to.equal(3);
+      chai.expect(put.callCount).to.equal(2);
+      chai.expect(put.firstCall.args[0]).to.deep.equal({
+        _id: DOC_IDS.MIGRATION_LOG,
+        migrations: [ 'xyz' ],
+        type: 'meta'
+      });
+      chai.expect(put.secondCall.args[0]).to.deep.equal({
+        _id: DOC_IDS.MIGRATION_LOG,
+        migrations: [ 'xyz', 'abc' ],
+        type: 'meta'
+      });
+    });
+  });
+
+  it('executes multiple migrations in order', () => {
+    const migration = [
+      {
+        name: 'a',
+        created: new Date(2015, 1, 1, 2, 0, 0, 0),
+        run: () => Promise.resolve()
+      },
+      {
+        name: 'b',
+        created: new Date(2015, 1, 1, 1, 0, 0, 0),
+        run: () => Promise.resolve()
+      },
+      {
+        name: 'c',
+        created: new Date(2015, 1, 1, 3, 0, 0, 0),
+        run: () => Promise.resolve()
+      }
+    ];
+    const getLog = sinon.stub(db.medic, 'get');
+    getLog.onCall(0).resolves({ _id: DOC_IDS.MIGRATION_LOG, type: 'meta', migrations: [ ] });
+    getLog.onCall(1).resolves({ _id: DOC_IDS.MIGRATION_LOG, type: 'meta', migrations: [ ] });
+    getLog.onCall(2).resolves({ _id: DOC_IDS.MIGRATION_LOG, type: 'meta', migrations: [ 'b' ] });
+    getLog.onCall(3).resolves({ _id: DOC_IDS.MIGRATION_LOG, type: 'meta', migrations: [ 'b', 'a' ] });
+    sinon.stub(migrations, 'get').resolves(migration);
+    const put = sinon.stub(db.medic, 'put').resolves({});
+    return migrations.run().then(() => {
+      chai.expect(getLog.callCount).to.equal(4);
+      chai.expect(put.callCount).to.equal(3);
+      chai.expect(put.args[0][0].migrations).to.deep.equal([ 'b' ]);
+      chai.expect(put.args[1][0].migrations).to.deep.equal([ 'b', 'a' ]);
+      chai.expect(put.args[2][0].migrations).to.deep.equal([ 'b', 'a', 'c' ]);
+    });
+  });
+
+  it('executes multiple migrations and stops when one errors', () => {
+    const migration = [
+      {
+        name: 'a',
+        created: new Date(2015, 1, 1, 1, 0, 0, 0),
+        run: () => Promise.resolve()
+      },
+      {
+        name: 'b',
+        created: new Date(2015, 1, 1, 2, 0, 0, 0),
+        run: () => Promise.reject('boom!')
+      },
+      {
+        name: 'c',
+        created: new Date(2015, 1, 1, 3, 0, 0, 0),
+        run: () => Promise.reject(new Error('should not be called'))
+      }
+    ];
+    const getLog = sinon.stub(db.medic, 'get');
+    getLog.onCall(0).resolves({ _id: DOC_IDS.MIGRATION_LOG, type: 'meta', migrations: [ ] });
+    getLog.onCall(1).resolves({ _id: DOC_IDS.MIGRATION_LOG, type: 'meta', migrations: [ ] });
+    sinon.stub(migrations, 'get').resolves(migration);
+    const put = sinon.stub(db.medic, 'put').resolves({});
+    return migrations.run().catch(err => {
+      chai.expect(err).to.equal('boom!');
+      chai.expect(getLog.callCount).to.equal(2);
+      chai.expect(put.callCount).to.equal(1);
+      chai.expect(put.firstCall.args[0]).to.deep.equal({
+        _id: DOC_IDS.MIGRATION_LOG,
+        migrations: [ 'a' ],
+        type: 'meta'
+      });
+    });
+  });
+
+  it('creates log if needed', () => {
+    const migration = [{
+      name: 'xyz',
+      created: new Date(2015, 1, 1, 1, 0, 0, 0),
+      run: () => Promise.resolve()
+    }];
+    const getLog = sinon.stub(db.medic, 'get');
+    getLog.onCall(0).returns(Promise.reject({ status: 404 }));
+    getLog.onCall(1).resolves({ _id: DOC_IDS.MIGRATION_LOG, type: 'meta', migrations: [] });
+    getLog.onCall(2).resolves({ _id: DOC_IDS.MIGRATION_LOG, type: 'meta', migrations: [] });
+    sinon.stub(migrations, 'get').resolves(migration);
+    const put = sinon.stub(db.medic, 'put').resolves({});
+    return migrations.run().then(() => {
+      chai.expect(put.callCount).to.equal(2);
+      chai.expect(put.firstCall.args[0]).to.deep.equal({
+        _id: DOC_IDS.MIGRATION_LOG,
+        migrations: [ ],
+        type: 'meta'
+      });
+      chai.expect(put.secondCall.args[0]).to.deep.equal({
+        _id: DOC_IDS.MIGRATION_LOG,
+        migrations: [ 'xyz' ],
+        type: 'meta'
+      });
+    });
+  });
+
+});

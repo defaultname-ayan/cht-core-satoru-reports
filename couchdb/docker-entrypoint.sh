@@ -1,0 +1,204 @@
+#!/bin/bash
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not
+# use this file except in compliance with the License. You may obtain a copy of
+# the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations under
+# the License.
+
+set -e -o pipefail
+CLUSTER_CREDENTIALS="/opt/couchdb/etc/local.d/cluster-credentials.ini"
+if [[ "$COUCHDB_SYNC_ADMINS_NODE" || "$CLUSTER_PEER_IPS" ]]; then
+	IS_CLUSTER=true
+else
+	IS_CLUSTER=false
+fi
+
+# first arg is `-something` or `+something`
+if [ "${1#-}" != "$1" ] || [ "${1#+}" != "$1" ]; then
+	set -- /opt/couchdb/bin/couchdb "$@"
+fi
+
+# first arg is the bare word `couchdb`
+if [ "$1" = 'couchdb' ]; then
+	shift
+	set -- /opt/couchdb/bin/couchdb "$@"
+fi
+
+setSecret() {
+	if [ -z "$COUCHDB_SECRET" ]; then
+		COUCHDB_SECRET=$(cat /proc/sys/kernel/random/uuid)
+	fi
+	# Ensure [couch_httpd_auth] section exists
+	if ! grep -q '^\s*\[\s*couch_httpd_auth\s*\]\s*$' "$CLUSTER_CREDENTIALS"; then
+		printf "\n[couch_httpd_auth]\n" >> "$CLUSTER_CREDENTIALS"
+	fi
+
+	if ! sed -n '/^\s*\[\s*couch_httpd_auth\s*\]\s*$/,/^\s*\[/p' "$CLUSTER_CREDENTIALS" | grep -q '^\s*secret\s*='; then
+		sed "/^\s*\[\s*couch_httpd_auth\s*\]\s*$/a secret = $COUCHDB_SECRET" "$CLUSTER_CREDENTIALS" > "${CLUSTER_CREDENTIALS}.tmp"
+		cp "${CLUSTER_CREDENTIALS}.tmp" "$CLUSTER_CREDENTIALS"
+		rm "${CLUSTER_CREDENTIALS}.tmp"
+	fi
+}
+
+setUuid() {
+	if [ -z "$COUCHDB_UUID" ]; then
+		COUCHDB_UUID=$(cat /proc/sys/kernel/random/uuid)
+	fi
+	# Ensure [couchdb] section exists
+	if ! grep -q '^\s*\[\s*couchdb\s*\]\s*$' "$CLUSTER_CREDENTIALS"; then
+		printf "\n[couchdb]\n" >> "$CLUSTER_CREDENTIALS"
+	fi
+
+	if ! sed -n '/^\s*\[\s*couchdb\s*\]\s*$/,/^\s*\[/p' "$CLUSTER_CREDENTIALS" | grep -q '^\s*uuid\s*='; then
+		sed "/^\s*\[\s*couchdb\s*\]\s*$/a uuid = $COUCHDB_UUID" "$CLUSTER_CREDENTIALS" > "${CLUSTER_CREDENTIALS}.tmp"
+		cp "${CLUSTER_CREDENTIALS}.tmp" "$CLUSTER_CREDENTIALS"
+		rm "${CLUSTER_CREDENTIALS}.tmp"
+	fi
+}
+
+set_nouveau_url() {
+  # Ensure [nouveau] section exists
+  if ! grep -q '^\s*\[\s*nouveau\s*\]\s*$' "$CLUSTER_CREDENTIALS"; then
+    printf "\n[nouveau]\n" >> "$CLUSTER_CREDENTIALS"
+  fi
+
+  sed -e '/^\s*url\s*=.*/d' -e "/^\s*\[\s*nouveau\s*\]\s*$/a url = $NOUVEAU_URL" "$CLUSTER_CREDENTIALS" > "${CLUSTER_CREDENTIALS}.tmp"
+  cp "${CLUSTER_CREDENTIALS}.tmp" "$CLUSTER_CREDENTIALS"
+  rm "${CLUSTER_CREDENTIALS}.tmp"
+}
+
+if [ "$1" = '/opt/couchdb/bin/couchdb' ]; then
+
+	# Check that we own everything in /opt/couchdb and fix if necessary. We also
+	# add the `-f` flag in all the following invocations because there may be
+	# cases where some of these ownership and permissions issues are non-fatal
+	# (e.g. a config file owned by root with o+r is actually fine), and we don't
+	# to be too aggressive about crashing here ...
+	find /opt/couchdb \! \( -user couchdb -group couchdb \) -exec chown -f couchdb:couchdb '{}' +
+
+	# Ensure that data files have the correct permissions. We were previously
+	# preventing any access to these files outside of couchdb:couchdb, but it
+	# turns out that CouchDB itself does not set such restrictive permissions
+	# when it creates the files. The approach taken here ensures that the
+	# contents of the datadir have the same permissions as they had when they
+	# were initially created. This should minimize any startup delay.
+	find /opt/couchdb/data -type d ! -perm 0755 -exec chmod -f 0755 '{}' +
+	find /opt/couchdb/data -type f ! -perm 0644 -exec chmod -f 0644 '{}' +
+
+	# Do the same thing for configuration files and directories. Technically
+	# CouchDB only needs read access to the configuration files as all online
+	# changes will be applied to the "docker.ini" file below, but we set 644
+	# for the sake of consistency.
+	find /opt/couchdb/etc -type d ! -perm 0755 -exec chmod -f 0755 '{}' +
+	find /opt/couchdb/etc -type f ! -perm 0644 -exec chmod -f 0644 '{}' +
+
+	# Ensure that CouchDB will write custom settings in this file
+	touch $CLUSTER_CREDENTIALS
+
+	if [ "$COUCHDB_USER" ] && [ "$COUCHDB_PASSWORD" ] && [ -z "$COUCHDB_SYNC_ADMINS_NODE" ]; then
+		# Ensure [admins] section exists
+		if ! grep -q '^\s*\[\s*admins\s*\]\s*$' "$CLUSTER_CREDENTIALS"; then
+			printf "\n[admins]\n" >> "$CLUSTER_CREDENTIALS"
+		fi
+
+		# Ensure user exists within [admins] section
+		if ! sed -n '/^\s*\[\s*admins\s*\]\s*$/,/^\s*\[/p' "$CLUSTER_CREDENTIALS" | grep -q "^\s*${COUCHDB_USER}\s*="; then
+			ADMIN_CREDS_LINE="$(printf '%s = %s' "$COUCHDB_USER" "$COUCHDB_PASSWORD")"
+			export ADMIN_CREDS_LINE
+			awk '/^\s*\[\s*admins\s*\]\s*$/{print; print ENVIRON["ADMIN_CREDS_LINE"]; next}1' \
+				"$CLUSTER_CREDENTIALS" > "${CLUSTER_CREDENTIALS}.tmp" \
+				&& cp "${CLUSTER_CREDENTIALS}.tmp" "$CLUSTER_CREDENTIALS" \
+				&& rm "${CLUSTER_CREDENTIALS}.tmp"
+		fi
+	fi
+
+	if [ "$SVC_NAME" ] && [ "$IS_CLUSTER" = true ]; then
+		# Since changing this name after it has been set can mess up clustering, this can only run once  so a new service name can not be set on subsequent runs
+		# Should only run when creating a cluster
+		if grep "127.0.0.1" /opt/couchdb/etc/vm.args; then
+			sed "s/127.0.0.1/$SVC_NAME/" "/opt/couchdb/etc/vm.args" > "/opt/couchdb/etc/vm.args.tmp"
+			cp "/opt/couchdb/etc/vm.args.tmp" "/opt/couchdb/etc/vm.args"
+			rm "/opt/couchdb/etc/vm.args.tmp"
+		fi
+	fi
+
+	if [ "$COUCHDB_LOG_LEVEL" ]; then
+		# Ensure [log] section exists
+		if ! grep -q '^\s*\[\s*log\s*\]\s*$' "$CLUSTER_CREDENTIALS"; then
+			printf "\n[log]\n" >> "$CLUSTER_CREDENTIALS"
+		fi
+
+		# Always set the log level (remove old value first, then insert)
+		sed -e '/^\s*level\s*=.*/d' -e "/^\s*\[\s*log\s*\]\s*$/a level = $COUCHDB_LOG_LEVEL" "$CLUSTER_CREDENTIALS" > "${CLUSTER_CREDENTIALS}.tmp"
+		cp "${CLUSTER_CREDENTIALS}.tmp" "$CLUSTER_CREDENTIALS"
+		rm "${CLUSTER_CREDENTIALS}.tmp"
+	fi
+
+	if [[ "$NOUVEAU_URL" ]]; then
+		set_nouveau_url
+	fi
+
+	if [ "$CLUSTER_PEER_IPS" ] || [ "$IS_CLUSTER" = false ]; then
+		setSecret
+		setUuid
+	fi
+
+	if [ "$COUCHDB_SYNC_ADMINS_NODE" ]; then
+		# Wait until couchdb1 node is ready and then retrieve salted password. We need to use same
+		# hashed password across all nodes so that session cookies can be reused.
+		/bin/bash /opt/couchdb/etc/set-up-cluster.sh check_if_couchdb_is_ready "http://$COUCHDB_SYNC_ADMINS_NODE:5984"
+		COUCHDB_HASHED_PASSWORD=$(curl -u "$COUCHDB_USER:$COUCHDB_PASSWORD" "http://$COUCHDB_SYNC_ADMINS_NODE:5984/_node/couchdb@$COUCHDB_SYNC_ADMINS_NODE/_config/admins/$COUCHDB_USER" | sed "s/^\([\"]\)\(.*\)\1\$/\2/g")
+
+		# Ensure [admins] section exists
+		if ! grep -q '^\s*\[\s*admins\s*\]\s*$' "$CLUSTER_CREDENTIALS"; then
+			printf "\n[admins]\n" >> "$CLUSTER_CREDENTIALS"
+		fi
+
+		# Always set the admin credentials (remove old entry from [admins] first, then insert)
+		ADMIN_CREDS_LINE="$(printf '%s = %s' "$COUCHDB_USER" "$COUCHDB_HASHED_PASSWORD")"
+		export ADMIN_CREDS_LINE
+		awk -v user="$COUCHDB_USER" '
+			/^\s*\[\s*admins\s*\]\s*$/ { in_admins=1; print; print ENVIRON["ADMIN_CREDS_LINE"]; next }
+			/^\s*\[/ { in_admins=0 }
+			in_admins && $0 ~ "^\\s*" user "\\s*=" { next }
+			1
+		' "$CLUSTER_CREDENTIALS" > "${CLUSTER_CREDENTIALS}.tmp" \
+			&& cp "${CLUSTER_CREDENTIALS}.tmp" "$CLUSTER_CREDENTIALS" \
+			&& rm "${CLUSTER_CREDENTIALS}.tmp"
+
+		COUCHDB_SECRET=$(curl -u "$COUCHDB_USER:$COUCHDB_PASSWORD" "http://$COUCHDB_SYNC_ADMINS_NODE:5984/_node/couchdb@$COUCHDB_SYNC_ADMINS_NODE/_config/couch_httpd_auth/secret" | sed "s/^\([\"]\)\(.*\)\1\$/\2/g")
+		setSecret
+
+		COUCHDB_UUID=$(curl -u "$COUCHDB_USER:$COUCHDB_PASSWORD" "http://$COUCHDB_SYNC_ADMINS_NODE:5984/_node/couchdb@$COUCHDB_SYNC_ADMINS_NODE/_config/couchdb/uuid" | sed "s/^\([\"]\)\(.*\)\1\$/\2/g")
+		setUuid
+	fi
+
+	# Start clustering after UUID, Secret and nodename are written.
+	/bin/bash /opt/couchdb/etc/set-up-cluster.sh
+
+	chown -f couchdb:couchdb $CLUSTER_CREDENTIALS || true
+
+  if [ "$DEFAULT_ULIMIT" = true ]; then
+    DEFAULT_ULIMIT=$(ulimit)
+    echo "WARNING: Starting CouchDb using system default ulimit of $DEFAULT_ULIMIT"
+    su -c "exec $*" couchdb
+  else
+    # shellcheck disable=SC2145 # needs additional investigation about intention before I'm confident in changing
+    set +e
+    su -c "ulimit -n 100000 && exec $*" couchdb
+    EXIT_CODE=$?
+    if [ $EXIT_CODE -ne 0 ]; then
+        echo "CouchDb failed to start. If the reported error is 'ulimit: error setting limit (Operation not permitted)', set the DEFAULT_ULIMIT environment variable to true and restart the service."
+        exit $EXIT_CODE
+    fi
+  fi
+
+else
+	exec "$@"
+fi

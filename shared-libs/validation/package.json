@@ -1,0 +1,14 @@
+{
+  "name": "@medic/validation",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/validation.js",
+  "scripts": {
+    "test": "nyc --nycrcPath='../nyc.config.js' mocha ./test/**/*"
+  },
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@medic/logger": "file:../logger",
+    "@medic/message-utils": "file:../message-utils"
+  }
+}

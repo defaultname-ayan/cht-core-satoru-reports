@@ -1,0 +1,77 @@
+const _ = require('lodash'); // #8494 don't use eslint/core as it throws an exception
+const Search = require('@medic/search');
+
+(function () {
+
+  'use strict';
+
+  // To make it easier to mock out
+  angular.module('inboxServices').factory('SearchFactory',
+    function(
+      DB,
+      DataContext
+    ) {
+
+      'ngInject';
+
+      const searchPromise = DataContext.then(dataContext => Search(DB(), dataContext));
+      const doSearch = (...args) => searchPromise.then(search => search(...args));
+      return () => doSearch;
+    });
+
+  angular.module('inboxServices').factory('Search',
+    function(
+      $log,
+      $q,
+      GetDataRecords,
+      SearchFactory
+    ) {
+
+      'ngInject';
+
+      let _currentQuery = {};
+
+      // Silently cancel repeated queries.
+      const debounce = function(type, filters, options) {
+        if (type === _currentQuery.type &&
+          _.isEqual(filters, _currentQuery.filters) &&
+          _.isEqual(options, _currentQuery.options)) {
+          return true;
+        }
+        _currentQuery.type = type;
+        _currentQuery.filters = Object.assign({}, filters);
+        _currentQuery.options = Object.assign({}, options);
+        return false;
+      };
+
+      const _search = SearchFactory();
+
+      return function(type, filters, options) {
+        $log.debug('Doing Search', type, filters, options);
+
+        options = options || {};
+        _.defaults(options, {
+          limit: 50,
+          skip: 0
+        });
+
+        if (!options.force && debounce(type, filters, options)) {
+          return $q.resolve([]);
+        }
+        return _search(type, filters, options)
+          .then(function(searchResults) {
+            return type === 'reports' ?
+              GetDataRecords.getReports(searchResults.docIds, options) :
+              GetDataRecords.getContacts(searchResults.docIds, options);
+          })
+          .then(function(results) {
+            _currentQuery = {};
+            return results;
+          })
+          .catch(function(err) {
+            _currentQuery = {};
+            throw err;
+          });
+      };
+    });
+}());

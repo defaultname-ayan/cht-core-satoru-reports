@@ -1,0 +1,191 @@
+const searchPage = require('@page-objects/default/search/search.wdio.page');
+const loginPage = require('@page-objects/default/login/login.wdio.page');
+const utils = require('@utils');
+const contactPage = require('@page-objects/default/contacts/contacts.wdio.page');
+const commonPage = require('@page-objects/default/common/common.wdio.page');
+const placeFactory = require('@factories/cht/contacts/place');
+const personFactory = require('@factories/cht/contacts/person');
+const userFactory = require('@factories/cht/users/users');
+const { CONTACT_TYPES } = require('@medic/constants');
+
+describe('Contact Search', () => {
+  const places = placeFactory.generateHierarchy();
+  const districtHospitalId = places.get('district_hospital')._id;
+  // NOTE: this is a search word added to contacts for searching purposes
+  // the value was chosen such that it is a sub-string of the short_name which
+  // gives double output from the couchdb view
+  const searchWord = 'sittu';
+
+  const sittuHealthCenter = placeFactory.place().build({
+    name: 'Sittu Health Center',
+    type: CONTACT_TYPES.HEALTH_CENTER,
+    parent: { _id: districtHospitalId, parent: { _id: '' } },
+    short_name: searchWord
+  });
+
+  const potuHealthCenter = placeFactory.place().build({
+    name: 'Potu Health Center',
+    type: CONTACT_TYPES.HEALTH_CENTER,
+    parent: { _id: districtHospitalId, parent: { _id: '' } }
+  });
+
+  const sittuPerson = personFactory.build({
+    name: 'Sittu',
+    parent: { _id: sittuHealthCenter._id, parent: sittuHealthCenter.parent },
+    short_name: searchWord
+  });
+
+  const potuPerson = personFactory.build({
+    name: 'Potu',
+    parent: { _id: sittuHealthCenter._id, parent: sittuHealthCenter.parent }
+  });
+
+  const devanagariPatient = personFactory.build({
+    name: 'Devanagari १२३४५',
+    parent: { _id: districtHospitalId }
+  });
+
+  const latinPatient = personFactory.build({
+    name: 'Latin 12345',
+    parent: { _id: districtHospitalId }
+  });
+
+  const supervisorPerson = personFactory.build({
+    name: 'Supervisor',
+    parent: { _id: districtHospitalId }
+  });
+
+  const offlineUser = userFactory.build({
+    username: 'offline-search-user',
+    place: districtHospitalId,
+    roles: ['chw_supervisor'],
+    contact: supervisorPerson._id
+  });
+  const onlineUser = userFactory.build({
+    username: 'online-search-user',
+    place: districtHospitalId,
+    roles: ['program_officer'],
+    contact: supervisorPerson._id
+  });
+
+  before(async () => {
+    await utils.saveDocs([
+      ...places.values(), sittuHealthCenter, sittuPerson, potuHealthCenter, potuPerson,
+      devanagariPatient, latinPatient, supervisorPerson,
+    ]);
+    await utils.createUsers([offlineUser, onlineUser]);
+  });
+
+  after(() => utils.deleteUsers([offlineUser, onlineUser]));
+
+  [
+    ['online', onlineUser],
+    ['offline', offlineUser],
+  ].forEach(([userType, user]) => describe(`Logged in as an ${userType} user`, () => {
+    before(async () => {
+      await loginPage.login(user);
+      await commonPage.goToPeople();
+    });
+
+    after(commonPage.logout);
+
+    it('search by Devanagari numerals should cross-match Latin numeral contacts', async () => {
+      await contactPage.getAllLHSContactsNames();
+      await searchPage.performSearch('१२३४५');
+      expect(await contactPage.getAllLHSContactsNames()).to.include.members([
+        'Devanagari १२३४५',
+        'Latin 12345',
+      ]);
+      await searchPage.clearSearch();
+    });
+
+    it('search by Latin numerals should cross-match Devanagari numeral contacts', async () => {
+      await contactPage.getAllLHSContactsNames();
+      await searchPage.performSearch('12345');
+      expect(await contactPage.getAllLHSContactsNames()).to.include.members([
+        'Devanagari १२३४५',
+        'Latin 12345',
+      ]);
+      await searchPage.clearSearch();
+    });
+
+    it('search by NON empty string should display results which contains match and clears search', async () => {
+      await contactPage.getAllLHSContactsNames();
+
+      await searchPage.performSearch('sittu');
+      expect(await contactPage.getAllLHSContactsNames()).to.have.members([
+        sittuPerson.name,
+        sittuHealthCenter.name,
+      ]);
+
+      await searchPage.clearSearch();
+      expect(await contactPage.getAllLHSContactsNames()).to.have.members([
+        potuHealthCenter.name,
+        sittuHealthCenter.name,
+        places.get('district_hospital').name,
+        places.get(CONTACT_TYPES.HEALTH_CENTER).name,
+      ]);
+    });
+
+    it('search should clear RHS selected contact', async () => {
+      await contactPage.selectLHSRowByText(potuHealthCenter.name, false);
+      await contactPage.waitForContactLoaded();
+      expect(await contactPage.contactCardSelectors.contactCardName().getText()).to.equal(potuHealthCenter.name);
+
+      await searchPage.performSearch('sittu');
+      await contactPage.waitForContactUnloaded();
+      const url = await browser.getUrl();
+      expect(url.endsWith('/contacts')).to.equal(true);
+    });
+
+    it('should be able to do exact match searching by a field', async () => {
+      await contactPage.getAllLHSContactsNames();
+
+      await searchPage.performSearch('name:sittu');
+      expect(await contactPage.getAllLHSContactsNames()).to.have.members([
+        sittuPerson.name,
+      ]);
+
+      await searchPage.clearSearch();
+      expect(await contactPage.getAllLHSContactsNames()).to.have.members([
+        potuHealthCenter.name,
+        sittuHealthCenter.name,
+        places.get('district_hospital').name,
+        places.get(CONTACT_TYPES.HEALTH_CENTER).name,
+      ]);
+    });
+
+    it('should have no results when searching by non-existent field value', async () => {
+      const randomWord = 'lorem-ipsum';
+      await contactPage.getAllLHSContactsNames();
+
+      await searchPage.performSearch(randomWord);
+      expect(await contactPage.allContactsList()).to.have.members([]);
+      await searchPage.clearSearch();
+      expect(await contactPage.getAllLHSContactsNames()).to.have.members([
+        potuHealthCenter.name,
+        sittuHealthCenter.name,
+        places.get('district_hospital').name,
+        places.get(CONTACT_TYPES.HEALTH_CENTER).name,
+      ]);
+    });
+
+    it('should have unique results for when multiple fields match the same search text', async () => {
+      await contactPage.getAllLHSContactsNames();
+
+      await searchPage.performSearch(searchWord);
+      expect(await contactPage.getAllLHSContactsNames()).to.have.members([
+        sittuPerson.name,
+        sittuHealthCenter.name,
+      ]);
+
+      await searchPage.clearSearch();
+      expect(await contactPage.getAllLHSContactsNames()).to.have.members([
+        potuHealthCenter.name,
+        sittuHealthCenter.name,
+        places.get('district_hospital').name,
+        places.get(CONTACT_TYPES.HEALTH_CENTER).name,
+      ]);
+    });
+  }));
+});

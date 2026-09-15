@@ -1,0 +1,14 @@
+{
+  "name": "@medic/settings",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "nyc --nycrcPath='../nyc.config.js' mocha ./test"
+  },
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@medic/couch-request": "file:../couch-request"
+  }
+}

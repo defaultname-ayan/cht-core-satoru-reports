@@ -1,0 +1,223 @@
+<mm-tool-bar title="about"></mm-tool-bar>
+<div class="inner">
+  <div class="col-sm-12 page about scrolling">
+
+    <div>
+      <mat-card>
+        <mat-card-header>
+          <mat-card-title translate>reload.app</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          <button mat-button color="primary" (click)="reload()" translate>Reload</button>
+        </mat-card-content>
+      </mat-card>
+
+      <mat-card>
+        <mat-card-header>
+          <mat-card-title (click)="secretDoor()" translate>about</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+
+          <div>
+            <label translate>version</label>
+            <p test-id="about-version">{{version}}</p>
+          </div>
+
+          <div>
+            <label translate>debug.supported_browser</label>
+            <div>
+              @if (browserSupport?.isUsingSupportedEnvironment) {
+                <span class="fa fa-check-square browser-support-icon-green"></span>
+              } @else {
+                <span class="fa fa-times browser-support-icon-red"></span>
+                <a target="_blank" rel="noopener noreferrer" href="https://docs.communityhealthtoolkit.org/core/releases/#requirements">
+                  {{'debug.supported_browser.see_requirements' | translate}}
+                </a>
+                <p class="browser-support-message">
+                  <span>{{'login.unsupported_browser' | translate}}</span>
+                  @switch (browserSupport.outdatedComponent) {
+                    @case ('chtAndroid') {
+                      <span>{{'login.unsupported_browser.outdated_cht_android' | translate}}</span>
+                    }
+                    @case ('webviewApk') {
+                      <span>{{'login.unsupported_browser.outdated_webview_apk' | translate}}</span>
+                    }
+                    @case ('browser') {
+                      <span>{{'login.unsupported_browser.outdated_browser' | translate}}</span>
+                    }
+                    @default {
+                      <span>{{'login.unsupported_browser.outdated_browser' | translate}}</span>
+                    }
+                  }
+                </p>
+              }
+            </div>
+          </div>
+
+          @if (androidDeviceInfo?.app?.version) {
+            <div>
+              <label translate>android_app.version.title</label>
+              <p>{{androidDeviceInfo.app.version}}</p>
+            </div>
+          }
+
+          @if (androidDeviceInfo?.app?.packageName) {
+            <div>
+              <label translate>android_app.package_name.title</label>
+              <p>{{androidDeviceInfo.app.packageName}}</p>
+            </div>
+          }
+
+          @if (androidDeviceInfo?.app?.versionCode) {
+            <div>
+              <label translate>android_app.version_code.title</label>
+              <p>{{androidDeviceInfo.app.versionCode}}</p>
+            </div>
+          }
+
+          @if (androidDeviceInfo?.software?.androidVersion) {
+            <div>
+              <label translate>android_app.os_android_version.title</label>
+              <p>
+                {{androidDeviceInfo.software.androidVersion}}
+                @if (androidDeviceInfo?.software?.osApiLevel) {
+                  <span>(SDK {{androidDeviceInfo.software.osApiLevel}})</span>
+                }
+              </p>
+            </div>
+          }
+
+          <div>
+            <label translate>ddoc.version</label>
+            <p>{{remoteRev}}</p>
+          </div>
+
+          <div>
+            <label translate>clientDdoc.version</label>
+            <p>{{localRev}}</p>
+          </div>
+
+          <div>
+            <label translate>url</label>
+            <p>{{url}}</p>
+          </div>
+
+          <div>
+            <label translate>User Name</label>
+            <p>{{userCtx.name}}</p>
+          </div>
+
+        </mat-card-content>
+      </mat-card>
+
+      <mat-card>
+        <mat-card-header>
+          <mat-card-title translate>debug.db_info.title</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+
+          <div>
+            <label translate>debug.db_info.name</label>
+            <p>{{dbInfo?.db_name}}</p>
+          </div>
+
+          <div>
+            <label translate>debug.db_info.docs</label>
+            <p>{{dbInfo?.doc_count}}</p>
+          </div>
+
+          <div>
+            <label translate>debug.db_info.seq</label>
+            <p>{{dbInfo?.update_seq}}</p>
+          </div>
+
+          <div>
+            <label translate>replication.last.success.to</label>
+            @if (replicationStatus.disabled) {
+              <p translate>replication.disabled</p>
+            } @else if (replicationStatus.lastSuccessTo) {
+              <p>{{replicationStatus.lastSuccessTo | simpleDateTime}}</p>
+            } @else {
+              <p translate>replication.last.success.unknown</p>
+            }
+          </div>
+
+          <div>
+            <label translate>replication.last.success.from</label>
+            @if (replicationStatus.disabled) {
+              <p translate>replication.disabled</p>
+            } @else if (replicationStatus.lastSuccessFrom) {
+              <p>{{replicationStatus.lastSuccessFrom | simpleDateTime}}</p>
+            } @else {
+              <p translate>replication.last.success.unknown</p>
+            }
+          </div>
+
+        </mat-card-content>
+      </mat-card>
+
+      @if (androidDataUsage) {
+      <mat-card>
+        <mat-card-header>
+          <mat-card-title translate>android_app.data_usage.title</mat-card-title>
+          <mat-card-subtitle translate>android_app.data_usage.description</mat-card-subtitle>
+        </mat-card-header>
+
+        <mat-card-content>
+
+          <h4 translate>android_app.data_usage.system.title</h4>
+          <div>
+            <div>
+              <label translate>android_app.data_usage.rx</label>
+              <p translate [translateParams]="{ number: androidDataUsage?.system?.rx | number }">number.bytes</p>
+            </div>
+            <div>
+              <label translate>android_app.data_usage.tx</label>
+              <p translate [translateParams]="{ number: androidDataUsage?.system?.tx | number }">number.bytes</p>
+            </div>
+          </div>
+
+          <h4 translate>android_app.data_usage.app.title</h4>
+          <div>
+            <div>
+              <label translate>android_app.data_usage.rx</label>
+              <p translate [translateParams]="{ number: androidDataUsage?.app?.rx | number }">number.bytes</p>
+            </div>
+            <div>
+              <label translate>android_app.data_usage.tx</label>
+              <p translate [translateParams]="{ number: androidDataUsage?.app?.tx | number }">number.bytes</p>
+            </div>
+          </div>
+
+        </mat-card-content>
+      </mat-card>
+      }
+
+      @if (partners?.length) {
+      <mat-card class="partners">
+        <mat-card-header>
+          <mat-card-title translate>partner.supporting</mat-card-title>
+        </mat-card-header>
+
+        <ul class="list-inline">
+          @for (partner of partners; track $index) {
+            <li>
+              <span [innerHTML]="partner | partnerImage"></span>
+            </li>
+          }
+        </ul>
+
+      </mat-card>
+      }
+
+      <div class="powered-by">
+        <p translate>about.cht</p>
+        <a href="https://communityhealthtoolkit.org" target="_blank" rel="noopener noreferrer">
+          <img src="/webapp/img/cht-logo-light.png" alt="Community Health Toolkit" />
+        </a>
+      </div>
+
+    </div>
+
+  </div>
+</div>

@@ -1,0 +1,211 @@
+@import (reference) "private-vars";
+
+/* app colors */
+@mm-mat-primary: @blue-dark;
+@mat-icon-color: @gray-ultra-dark;
+@mat-inverse-icon-color: @white;
+@mat-font-color: @gray-ultra-dark;
+
+@top-header-color: @gray-ultra-dark;
+@tab-navbar-color: @medium-black;
+@tab-selected-color: @grey-darker;
+@background-color: @gray-ultra-light;
+@target-card-background-color: @gray-ultra-lighter;
+@target-card-border-color: @gray-light;
+@form-background-color: @white;
+@form-field-border: @gray-medium;
+@list-highlight-color: @gray-ultra-light;
+@separator-color: @gray-light;
+@separator-dark-color: @gray-medium;
+@button-text-color: @gray-ultra-dark;
+@button-text-inverse-color: @gray-light;
+@button-background-inverse-color: @white;
+@text-normal-color: @gray-ultra-dark;
+@text-inverse-color: @white;
+@label-color: @gray-dark;
+@text-secondary-color: @gray-dark;
+@text-link-color: @blue-dark;
+@text-link-active-color: @blue-ultra-dark;
+@ok-color: @green;
+@error-color: @red;
+@high-risk-color: @red;
+@unread-color: @blue-dark;
+@contacts-primary-color: @yellow-dark;
+@inactive-color: @gray-medium;
+@targets-below-color: @black;
+@targets-above-goal: @teal;
+@report-review-error-color: @red;
+@report-review-verified-color: @teal-dark;
+@overdue-color: @red;
+@button-color: @blue-dark;
+@checkbox-selected-color: @blue-dark;
+@checkbox-border-color: @gray-medium;
+@chip-background-color: @blue-dark;
+@chip-text-color: @white;
+@chip-border-color: @white;
+@sidebar-background-color: @white;
+@filter-icon-color: @medium-black;
+@filter-text-color: @medium-black;
+@filter-secondary-text-color: @gray-medium;
+@filter-arrow-color: @gray-medium;
+@progress-bar-background-color: @white;
+@targets-progress-bar-unmet-goal: @gray-medium-dark;
+@backdrop-color: @black;
+@enketo-hover-color: @blue-highlight;
+@shadow-color: @gray-light;
+@tooltip-background: @gray-ultra-dark;
+@tooltip-text: @gray-light;
+@target-progress-bar-border-color: @white;
+@targets-progress-bar-background-color: @gray-medium-dark;
+@nav-icon-gray: @silver-gray;
+
+/* tab colors */
+@messages-color: @blue;
+@messages-highlight: @blue-highlight;
+@tasks-color: @periwinkle;
+@tasks-highlight: @periwinkle-highlight;
+@contacts-color: @pink;
+@contacts-highlight: @pink-highlight;
+@reports-color: @yellow;
+@reports-highlight: @yellow-highlight;
+@training-color: @gray-medium;
+@training-highlight: @gray-ultra-lighter;
+@analytics-color: @teal;
+@analytics-highlight: @teal-highlight;
+@admin-color: @gray-dark;
+@help-color: @gray-dark;
+
+/* state colors */
+@scheduled-state-color: @blue;
+@pending-state-color: @yellow;
+@success-state-color: @teal-dark;
+@sent-state-color: @teal-dark;
+@completed-state-color: @teal-dark;
+@muted-state-color: @gray-medium;
+@failed-state-color: @red;
+@cleared-state-color: @gray-medium;
+@denied-state-color: @gray-medium;
+@delivered-state-color: @teal-dark;
+@forwarded-to-gateway-state-color: @yellow;
+@received-by-gateway-state-color: @yellow;
+@forwarded-by-gateway-state-color: @yellow;
+
+/* Visit count progress colors */
+@visits-goal-incomplete: @yellow-dark;
+@visits-goal-done: @teal-dark;
+
+/* sizes */
+@radius-size: 10px;
+@radius-size-medium: 8px;
+@radius-size-small: 4px;
+@content-width: 100vw;
+@admin-content-width: 1440px;
+@media-tablet: 985px;
+@media-mobile: 767px;
+@media-small-mobile: 400px;
+@header-dropdown-width: 250px;
+@header-bar-extras: 40px;
+@toolbar-desktop-height: 60px;
+@old-nav-filters-bar-height: 58px;
+@old-nav-top-desktop-height: 123px;
+@old-nav-top-mobile-height: 115px;
+@toolbar-mobile-height: 50px;
+@tool-bar-title-right-margin: 100px;
+@top-navbar-height: 60px;
+@top-without-filter: 75px;
+@snackbar-margin: 15px;
+@fab-bottom-margin: 15px;
+@fab-height: 56px;
+@fab-offset-height: @fab-height + @fab-bottom-margin + @snackbar-margin;
+@sidebar-menu-height: 100vh;
+@sidebar-menu-mobile-width: 85vw;
+@sidebar-menu-desktop-width: 470px;
+@sidebar-menu-header-mobile: @toolbar-mobile-height;
+@sidebar-menu-header-desktop: @toolbar-desktop-height;
+@tab-navbar-size: 80px;
+@more-options-icon-size-mobile: 32px;
+@more-options-icon-size-desktop: 24px;
+@training-cards-footer-height: 95px;
+@training-cards-page-height: 54vh;
+
+/* fonts */
+@font-family-main: Noto, sans-serif;
+
+/* font sizes */
+@font-XXL: 1.5rem;
+@font-extra-large: 1.25rem;
+@font-large: 1.125rem;
+@font-medium: 1rem;
+@font-small: 0.875rem;
+@font-extra-small: 0.8125rem;
+@font-XXS: 0.75rem;
+@font-XXXS: 0.69rem;
+@font-XXXXS: 0.625rem;
+
+@icon-large: 60px;
+@icon-small: 30px;
+@icon-extra-small: 20px;
+@icon-XXS: 17px;
+
+/* icons */
+@scheduled-state-icon: '\f073';
+@muted-state-icon: '\f1f6';
+@cleared-state-icon: '\f00d';
+@pending-state-icon: '\f017';
+@forwarded-to-gateway-state-icon: '\f064';
+@received-by-gateway-state-icon: '\f381';
+@forwarded-by-gateway-state-icon: '\f382';
+@sent-state-icon: '\f0e0';
+@delivered-state-icon: '\f058';
+@denied-state-icon: '\f056';
+@failed-state-icon: '\f071';
+@high-risk-icon: '\f071';
+@upcoming-edd-icon: '\f111';
+
+/* margins */
+@targets-column-gap: 24px;
+
+/* functions */
+.button-text(@color: @button-text-color) {
+  color: @color;
+  text-shadow: rgba(255, 255, 255, 0.5) 1px 1px 2px;
+  svg {
+    filter: drop-shadow(1px 1px 2px rgba(255, 255, 255, 0.5));
+    circle,
+    path {
+      fill: @button-text-color;
+    }
+  }
+}
+
+.button-text-hover() {
+  color: @white;
+  svg {
+    circle,
+    path {
+      fill: @white;
+    }
+  }
+}
+
+.button-text-disabled() {
+  color: @label-color;
+  svg {
+    circle,
+    path {
+      fill: @label-color;
+    }
+  }
+}
+
+.button-text-inverse(@color: @button-text-inverse-color) {
+  color: @color;
+  text-shadow: rgba(0, 0, 0, 0.5) 1px 1px 2px;
+  svg {
+    filter: drop-shadow(1px 1px 2px rgba(0, 0, 0, 0.5));
+    circle,
+    path {
+      fill: @button-text-inverse-color;
+    }
+  }
+}

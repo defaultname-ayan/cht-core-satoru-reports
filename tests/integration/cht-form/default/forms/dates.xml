@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<h:html xmlns="http://www.w3.org/2002/xforms" xmlns:h="http://www.w3.org/1999/xhtml" xmlns:ev="http://www.w3.org/2001/xml-events" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:jr="http://openrosa.org/javarosa" xmlns:orx="http://openrosa.org/xforms" xmlns:odk="http://www.opendatakit.org/xforms">
+  <h:head>
+    <h:title>Dates</h:title>
+    <model odk:xforms-version="1.0.0">
+      <itext>
+        <translation lang="en">
+          <text id="/data/group/date_a:label">
+            <value>Date A</value>
+          </text>
+          <text id="/data/group/date_b:label">
+            <value>Date B</value>
+          </text>
+        </translation>
+      </itext>
+      <instance>
+        <data id="dates" version="2024-04-02 00:00:00" prefix="J1!dates!" delimiter="#">
+          <group>
+            <date_a/>
+            <date_b/>
+          </group>
+          <diff_in_days/>
+          <diff_in_weeks/>
+          <diff_in_months/>
+          <diff_in_years/>
+          <meta tag="hidden">
+            <instanceID/>
+          </meta>
+        </data>
+      </instance>
+      <instance id="contact-summary"/>
+      <instance id="user-contact-summary"/>
+      <bind nodeset="/data/group/date_a" type="date"/>
+      <bind nodeset="/data/group/date_b" type="date"/>
+      <bind nodeset="/data/diff_in_days" type="string" calculate="cht:difference-in-days( /data/group/date_a ,  /data/group/date_b )"/>
+      <bind nodeset="/data/diff_in_weeks" type="string" calculate="cht:difference-in-weeks( /data/group/date_a ,  /data/group/date_b )"/>
+      <bind nodeset="/data/diff_in_months" type="string" calculate="cht:difference-in-months( /data/group/date_a ,  /data/group/date_b )"/>
+      <bind nodeset="/data/diff_in_years" type="string" calculate="cht:difference-in-years( /data/group/date_a ,  /data/group/date_b )"/>
+      <bind nodeset="/data/meta/instanceID" type="string" readonly="true()" jr:preload="uid"/>
+    </model>
+  </h:head>
+  <h:body class="pages">
+    <group appearance="field-list" ref="/data/group">
+      <input ref="/data/group/date_a">
+        <label ref="jr:itext('/data/group/date_a:label')"/>
+      </input>
+      <input ref="/data/group/date_b">
+        <label ref="jr:itext('/data/group/date_b:label')"/>
+      </input>
+    </group>
+  </h:body>
+</h:html>

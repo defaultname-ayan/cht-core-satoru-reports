@@ -1,0 +1,11 @@
+{
+  "name": "@medic/bulk-docs-utils",
+  "version": "1.0.0",
+  "description": "Common utility functions for bulk docs operations",
+  "main": "src/bulk-docs-utils.js",
+  "scripts": {
+    "test": "nyc --nycrcPath='../nyc.config.js' mocha ./test"
+  },
+  "author": "",
+  "license": "Apache-2.0"
+}

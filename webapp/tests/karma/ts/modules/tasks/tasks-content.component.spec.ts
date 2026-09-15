@@ -1,0 +1,831 @@
+import { ComponentFixture, fakeAsync, TestBed, tick } from '@angular/core/testing';
+import { MockStore, provideMockStore } from '@ngrx/store/testing';
+import { RouterTestingModule } from '@angular/router/testing';
+import { TranslateFakeLoader, TranslateLoader, TranslateModule } from '@ngx-translate/core';
+import { expect } from 'chai';
+import sinon from 'sinon';
+import { Observable } from 'rxjs';
+import { ActivatedRoute, Router } from '@angular/router';
+import { HttpClient } from '@angular/common/http';
+import { CHTDatasourceService } from '@mm-services/cht-datasource.service';
+
+import { FormService } from '@mm-services/form.service';
+import { PerformanceService } from '@mm-services/performance.service';
+import { XmlFormsService } from '@mm-services/xml-forms.service';
+import { TasksContentComponent } from '@mm-modules/tasks/tasks-content.component';
+import { GlobalActions } from '@mm-actions/global';
+import { EnketoComponent } from '@mm-components/enketo/enketo.component';
+import { Selectors } from '@mm-selectors/index';
+import { GeolocationService } from '@mm-services/geolocation.service';
+import { TasksActions } from '@mm-actions/tasks';
+import { TasksForContactService } from '@mm-services/tasks-for-contact.service';
+import { InteractionTrackingService } from '@mm-services/interaction-tracking.service';
+import { Contact, Qualifier } from '@medic/cht-datasource';
+
+describe('TasksContentComponent', () => {
+  let tasks;
+  let setEnketoEditedStatus;
+
+  let render;
+  let getContact;
+  let xmlFormsService;
+  let route;
+  let store;
+  let geolocationService;
+  let formService;
+  let router;
+  let tasksForContactService;
+  let stopPerformanceTrackStub;
+  let performanceService;
+
+  let compileComponent;
+  let component: TasksContentComponent;
+  let fixture: ComponentFixture<TasksContentComponent>;
+  let chtDatasourceService;
+  let interactionTrackingService;
+  
+  beforeEach(() => {
+    stopPerformanceTrackStub = sinon.stub();
+    performanceService = { track: sinon.stub().returns({ stop: stopPerformanceTrackStub }) };
+    render = sinon.stub().resolves();
+    xmlFormsService = { getFormConfig: sinon.stub().resolves() };
+    getContact = sinon.stub().resolves({ _id: 'contact' });
+    route = { params: new Observable(obs => obs.next({ id: '123' })) };
+    setEnketoEditedStatus = sinon.stub(GlobalActions.prototype, 'setEnketoEditedStatus');
+    geolocationService = { init: sinon.stub() };
+    formService = { render, unload: sinon.stub(), save: sinon.stub() };
+    router = { navigate: sinon.stub() };
+    tasksForContactService = { getLeafPlaceAncestor: sinon.stub().resolves() };
+    chtDatasourceService = {
+      bind: sinon.stub().withArgs(Contact.v1.get).returns(getContact)
+    };
+    interactionTrackingService = { startSession: sinon.stub(), record: sinon.stub(), endSession: sinon.stub() };
+
+    const mockedSelectors = [
+      { selector: Selectors.getTasksLoaded, value: true },
+    ];
+
+    TestBed.configureTestingModule({
+      imports: [
+        TranslateModule.forRoot({ loader: { provide: TranslateLoader, useClass: TranslateFakeLoader } }),
+        RouterTestingModule,
+        TasksContentComponent,
+        EnketoComponent,
+      ],
+      providers: [
+        provideMockStore({ selectors: mockedSelectors }),
+        { provide: ActivatedRoute, useValue: route },
+        { provide: FormService, useValue: formService },
+        { provide: XmlFormsService, useValue: xmlFormsService },
+        { provide: PerformanceService, useValue: performanceService },
+        { provide: GeolocationService, useValue: geolocationService },
+        { provide: Router, useValue: router },
+        { provide: TasksForContactService, useValue: tasksForContactService },
+        { provide: CHTDatasourceService, useValue: chtDatasourceService },
+        { provide: InteractionTrackingService, useValue: interactionTrackingService },
+        { provide: HttpClient, useValue: {} },
+      ],
+    });
+
+    store = TestBed.inject(MockStore);
+
+    compileComponent = () => {
+      store.overrideSelector(Selectors.getTasksList, tasks);
+      return TestBed.compileComponents().then(() => {
+        fixture = TestBed.createComponent(TasksContentComponent);
+        component = fixture.componentInstance;
+        fixture.detectChanges();
+        return fixture.whenStable();
+      });
+    };
+  });
+
+  afterEach(() => {
+    sinon.restore();
+    store.resetSelectors();
+  });
+
+  it('should unsubscribe and cancel geohandle when destroyed', async () => {
+    const geoHandle = { cancel: sinon.stub() };
+    geolocationService.init.returns(geoHandle);
+    tasks = [{
+      _id: '123',
+      actions: [{
+        type: 'report',
+        form: 'A',
+        content: 'nothing'
+      }]
+    }];
+    const formConfig = { doc: { _id: 'myform', title: 'My Form' } };
+    xmlFormsService.getFormConfig.resolves(formConfig);
+
+    await compileComponent();
+    const spySubscriptionsUnsubscribe = sinon.spy(component.subscription, 'unsubscribe');
+
+    component.ngOnDestroy();
+    expect(spySubscriptionsUnsubscribe.callCount).to.equal(1);
+    expect(geoHandle.cancel.callCount).to.equal(1);
+  });
+
+  it('should clear last completed task when loaded', async () => {
+    const setLastSubmittedTask = sinon.stub(TasksActions.prototype, 'setLastSubmittedTask');
+    await compileComponent();
+    expect(setLastSubmittedTask.callCount).to.equal(1);
+    expect(setLastSubmittedTask.args[0]).to.deep.equal([null]);
+  });
+
+  it('loads form when task has one action and no fields (without hydration)', async () => {
+    tasks = [{
+      _id: '123',
+      actions: [{
+        type: 'report',
+        form: 'A',
+        content: 'nothing'
+      }]
+    }];
+    const formConfig = { doc: { _id: 'myform', title: 'My Form' } };
+    xmlFormsService.getFormConfig.resolves(formConfig);
+
+    await compileComponent();
+
+    expect(xmlFormsService.getFormConfig.calledOnceWithExactly('task', 'A')).to.be.true;
+
+    expect(render.callCount).to.equal(1);
+    expect(render.args[0][0]).to.deep.include({
+      selector: '#task-report',
+      formConfig,
+      instanceData: 'nothing',
+    });
+
+    expect(getContact.callCount).to.eq(0);
+    expect(setEnketoEditedStatus.callCount).to.equal(1);
+    expect(setEnketoEditedStatus.args[0]).to.deep.equal([false]);
+  });
+
+  it('records task:open with the raw title key as ref and list index as detail', async () => {
+    tasks = [{
+      _id: '123',
+      title: 'Home visit for Diana',
+      titleKey: 'tasks.home_visit.title',
+      actions: [{ type: 'report', form: 'pregnancy_visit', content: {} }],
+    }];
+
+    await compileComponent();
+
+    const taskOpenCalls = interactionTrackingService.record.getCalls()
+      .filter(call => call.args[0] === 'task:open');
+    expect(taskOpenCalls).to.have.length(1);
+    const [, ref, detail] = taskOpenCalls[0].args;
+    expect(ref).to.equal('tasks.home_visit.title');
+    expect(detail).to.equal('0');
+  });
+
+  it('successful hydration', async () => {
+    tasks = [{
+      _id: '123',
+      forId: 'contact',
+      actions: [{
+        type: 'report',
+        form: 'A',
+        content: {
+          something: 'nothing',
+        },
+      }]
+    }];
+    const formConfig = { doc: { _id: 'myform', title: 'My Form' } };
+    xmlFormsService.getFormConfig.resolves(formConfig);
+    geolocationService.init.returns({ just: 'an object reference', cancel: sinon.stub() });
+
+    await compileComponent();
+
+    expect(getContact.calledOnceWithExactly(Qualifier.byUuid('contact'))).to.be.true;
+    expect(geolocationService.init.callCount).to.equal(1);
+    expect(render.callCount).to.eq(1);
+    expect(render.args[0][0].instanceData).to.deep.eq({
+      contact: { _id: 'contact' },
+      something: 'nothing',
+      task_id: '123',
+    });
+    expect(interactionTrackingService.record.args).to.deep.include(['task:form_open', 'A']);
+  });
+
+  it('successful hydration with existent action content', async () => {
+    tasks = [{
+      _id: '123',
+      forId: 'contact',
+      actions: [{
+        type: 'report',
+        form: 'A',
+        content: {
+          something: 'nothing',
+          contact: { some: 'thing' },
+        },
+      }, {
+        type: 'report',
+        form: 'B',
+        content: {
+          something: 'other',
+        },
+      }]
+    }];
+    const setSelectedTask = sinon.stub(TasksActions.prototype, 'setSelectedTask');
+    const formConfig = { doc: { _id: 'myform', title: 'My Form' } };
+    xmlFormsService.getFormConfig.resolves(formConfig);
+    geolocationService.init.returns({ just: 'an object reference', cancel: sinon.stub() });
+
+    await compileComponent();
+
+    expect(getContact.calledOnceWithExactly(Qualifier.byUuid('contact'))).to.be.true;
+    expect(render.callCount).to.eq(0);
+    expect(setSelectedTask.callCount).to.equal(1);
+    expect(setSelectedTask.args[0]).to.deep.equal([
+      {
+        _id: '123',
+        forId: 'contact',
+        actions: [{
+          type: 'report',
+          form: 'A',
+          content: {
+            something: 'nothing',
+            contact: { some: 'thing' },
+            task_id: '123',
+          },
+        }, {
+          type: 'report',
+          form: 'B',
+          content: {
+            something: 'other',
+            contact: { _id: 'contact' },
+            task_id: '123',
+          },
+        }]
+      }
+    ]);
+  });
+
+  it('unsuccessful hydration', async () => {
+    getContact.resolves(null);
+    tasks = [{
+      _id: '123',
+      forId: 'dne',
+      actions: [{
+        type: 'report',
+        form: 'A',
+      }]
+    }];
+    const formConfig = { doc: { _id: 'myform', title: 'My Form' } };
+    xmlFormsService.getFormConfig.resolves(formConfig);
+
+    await compileComponent();
+
+    expect(getContact.calledOnceWithExactly(Qualifier.byUuid('dne'))).to.be.true;
+    expect(render.callCount).to.eq(1);
+    expect(render.args[0][0].instanceData).to.deep.eq({ contact: { _id: 'dne' }, task_id: '123' });
+  });
+
+  it('should work when form not found', async () => {
+    const consoleErrorMock = sinon.stub(console, 'error');
+    xmlFormsService.getFormConfig.rejects({ status: 404 });
+    tasks = [{
+      _id: '123',
+      forId: 'dne',
+      actions: [{
+        type: 'report',
+        form: 'A',
+      }]
+    }];
+
+    await compileComponent();
+
+    expect(render.callCount).to.eq(0);
+    expect(component.errorTranslationKey).to.equal('error.loading.form');
+    expect(component.contentError).to.equal(true);
+    expect(component.loadingForm).to.equal(false);
+    expect(consoleErrorMock.callCount).to.equal(1);
+    expect(consoleErrorMock.args[0][0]).to.equal('Error loading form.');
+  });
+
+  it('does not load form when task has more than one action', async () => {
+    tasks = [{
+      actions: [{}, {}] // two forms
+    }];
+
+    await compileComponent();
+
+    expect(component.form).to.be.undefined;
+    expect(component.loadingForm).to.be.undefined;
+    expect(render.callCount).to.equal(0);
+  });
+
+  it('does not load form when task has fields (e.g. description)', async () => {
+    tasks = [{
+      actions: [{
+        type: 'report',
+        form: 'B'
+      }],
+      fields: [{
+        label: [{
+          content: 'Description',
+          locale: 'en'
+        }],
+        value: [{
+          content: '{{contact.name}} survey due',
+          locale: 'en'
+        }]
+      }]
+    }];
+
+    await compileComponent();
+
+    expect(component.form).to.be.undefined;
+    expect(component.loadingForm).to.be.undefined;
+    expect(render.callCount).to.equal(0);
+  });
+
+  it('displays error if enketo fails to render', async () => {
+    const consoleErrorMock = sinon.stub(console, 'error');
+    render.rejects('foo');
+    tasks = [{
+      _id: '123',
+      actions: [{
+        type: 'report',
+        form: 'A',
+        content: 'nothing'
+      }]
+    }];
+    xmlFormsService.getFormConfig.resolves({ id: 'myform', doc: { title: 'My Form' } });
+
+    await compileComponent();
+
+    expect(component.loadingForm).to.equal(false);
+    expect(component.contentError).to.equal(true);
+    expect(consoleErrorMock.callCount).to.equal(1);
+    expect(consoleErrorMock.args[0][0]).to.equal('Error loading form.');
+  });
+
+  it('should wait for the tasks to load before setting selected task', fakeAsync(async () => {
+    const notTask = {
+      _id: '123',
+      forId: 'contact',
+      actions: [{
+        type: 'report',
+        form: 'B',
+        content: {
+          something: 'other',
+        },
+      }]
+    };
+    const formConfig = { doc: { _id: 'myform', title: 'My Form' } };
+    xmlFormsService.getFormConfig.resolves(formConfig);
+    store.overrideSelector(Selectors.getTasksLoaded, false);
+    store.refreshState();
+
+    await compileComponent([]);
+
+    expect(render.callCount).to.equal(0);
+    store.overrideSelector(Selectors.getTasksList, [notTask]);
+    store.overrideSelector(Selectors.getTasksLoaded, true);
+    store.refreshState();
+    fixture.detectChanges();
+
+    await fixture.whenStable();
+    tick();
+
+    expect(render.callCount).to.equal(1);
+    expect(render.args[0][0].instanceData).to.deep.eq({
+      contact: { _id: 'contact' },
+      something: 'other',
+      task_id: '123',
+    });
+  }));
+
+  describe('perform action', () => {
+    beforeEach(() => {
+      sinon.stub(GlobalActions.prototype, 'setCancelCallback');
+      sinon.stub(GlobalActions.prototype, 'clearNavigation');
+      sinon.stub(TasksActions.prototype, 'setSelectedTask');
+    });
+
+    it('should do nothing for random action type', async () => {
+      xmlFormsService.getFormConfig.resolves({ id: 'myform', doc: { title: 'My Form' } });
+      await compileComponent([]);
+      sinon.resetHistory();
+      await component.performAction(undefined);
+
+      expect(xmlFormsService.getFormConfig.callCount).to.equal(0);
+      expect((<any>GlobalActions.prototype.setCancelCallback).callCount).to.equal(0);
+    });
+
+    it('should set cancel callback correctly when not skipping details', async () => {
+      xmlFormsService.getFormConfig.resolves({ id: 'myform', doc: { title: 'My Form' } });
+      await compileComponent([]);
+      sinon.resetHistory();
+
+      component.form = 'someform' as any;
+      component.loadingForm = true;
+      component.contentError = true;
+      await component.performAction({});
+
+      expect((<any>GlobalActions.prototype.setCancelCallback).callCount).to.equal(1);
+      const cancelCallback = (<any>GlobalActions.prototype.setCancelCallback).args[0][0];
+      expect((<any>TasksActions.prototype.setSelectedTask).callCount).to.equal(0);
+
+      cancelCallback();
+
+      expect((<any>TasksActions.prototype.setSelectedTask).callCount).to.equal(1);
+      expect((<any>TasksActions.prototype.setSelectedTask).args[0]).to.deep.equal([null]);
+      expect(formService.unload.callCount).to.equal(1);
+
+      expect(component.form).to.be.undefined;
+      expect(component.loadingForm).to.equal(false);
+      expect(component.contentError).to.equal(false);
+      expect((<any>GlobalActions.prototype.clearNavigation).callCount).to.equal(1);
+      expect(router.navigate.callCount).to.equal(0);
+      expect(interactionTrackingService.record.args).to.deep.include(['task:back']);
+    });
+
+    it('should set cancel callback correctly when skipping details', async () => {
+      xmlFormsService.getFormConfig.resolves({ id: 'myform', doc: { title: 'My Form' } });
+      await compileComponent([]);
+      sinon.resetHistory();
+
+      component.form = 'someform' as any;
+      component.loadingForm = true;
+      component.contentError = true;
+      await component.performAction({}, true);
+
+      expect((<any>GlobalActions.prototype.setCancelCallback).callCount).to.equal(1);
+      const cancelCallback = (<any>GlobalActions.prototype.setCancelCallback).args[0][0];
+      expect((<any>TasksActions.prototype.setSelectedTask).callCount).to.equal(0);
+
+      cancelCallback();
+
+      expect((<any>TasksActions.prototype.setSelectedTask).callCount).to.equal(1);
+      expect((<any>TasksActions.prototype.setSelectedTask).args[0]).to.deep.equal([null]);
+      expect(formService.unload.callCount).to.equal(0);
+
+      expect(component.form).to.equal('someform');
+      expect(component.loadingForm).to.equal(true);
+      expect(component.contentError).to.equal(false);
+      expect((<any>GlobalActions.prototype.clearNavigation).callCount).to.equal(0);
+
+      expect(router.navigate.callCount).to.equal(1);
+      expect(router.navigate.args[0]).to.deep.equal([['/tasks']]);
+    });
+
+    it('should work with action of type "contact"', async () => {
+      await compileComponent([]);
+      sinon.resetHistory();
+
+      const action = { type: 'contact', content: { parent_id: 'district_hospital_uuid', type: 'c_type' } };
+      await component.performAction(action);
+
+      expect(xmlFormsService.getFormConfig.callCount).to.equal(0);
+      expect(formService.render.callCount).to.equal(0);
+      expect(router.navigate.callCount).to.equal(1);
+      expect(router.navigate.args[0]).to.deep.equal([['/contacts', 'district_hospital_uuid', 'add', 'c_type']]);
+    });
+
+    it('should work with action of type "contact" without parent', async () => {
+      await compileComponent([]);
+      sinon.resetHistory();
+
+      const action = { type: 'contact', content: { type: 'c_type' } };
+      await component.performAction(action);
+
+      expect(xmlFormsService.getFormConfig.callCount).to.equal(0);
+      expect(formService.render.callCount).to.equal(0);
+      expect(router.navigate.callCount).to.equal(1);
+      expect(router.navigate.args[0]).to.deep.equal([['/contacts', 'add', 'c_type']]);
+    });
+
+    it('should work with action of type "contact" with parent without type', async () => {
+      await compileComponent([]);
+      sinon.resetHistory();
+
+      const action = { 
+        type: 'contact', 
+        content: { 
+          parent_id: 'district_hospital_uuid',
+          contact: { 
+            _id: 'my_contact' 
+          } 
+        } 
+      };
+      await component.performAction(action);
+
+      expect(xmlFormsService.getFormConfig.callCount).to.equal(0);
+      expect(formService.render.callCount).to.equal(0);
+      expect(router.navigate.callCount).to.equal(1);
+      expect(router.navigate.args[0]).to.deep.equal([['/contacts', 'my_contact']]);
+    });
+
+    it('should work with action of type "contact" and content with "edit_id"', async () => {
+      await compileComponent([]);
+      sinon.resetHistory();
+
+      const action = { type: 'contact', content: { edit_id: '123' } };
+      await component.performAction(action);
+
+      expect(xmlFormsService.getFormConfig.callCount).to.equal(0);
+      expect(formService.render.callCount).to.equal(0);
+      expect(router.navigate.callCount).to.equal(1);
+      expect(router.navigate.args[0]).to.deep.equal([['/contacts', '123', 'edit']]);
+    });
+
+    it('should work with action of type "contact" without parent or type', async () => {
+      await compileComponent([]);
+      sinon.resetHistory();
+
+      const action = { type: 'contact', content: { contact: { _id: 'my_contact' } } };
+      await component.performAction(action);
+
+      expect(xmlFormsService.getFormConfig.callCount).to.equal(0);
+      expect(formService.render.callCount).to.equal(0);
+      expect(router.navigate.callCount).to.equal(1);
+      expect(router.navigate.args[0]).to.deep.equal([['/contacts', 'my_contact']]);
+      expect(tasksForContactService.getLeafPlaceAncestor.callCount).to.equal(0);
+    });
+
+    it('should render form when action type is report', async () => {
+      const formConfig = { doc: { _id: 'myform', title: 'My Form' } };
+      const action = { type: 'report', form: 'myform', content: { contact: { _id: 'my_contact' } } };
+      xmlFormsService.getFormConfig.resolves(formConfig);
+      tasksForContactService.getLeafPlaceAncestor.resolves({ any: 'model' });
+      await compileComponent([]);
+
+      sinon.resetHistory();
+      sinon.stub(GlobalActions.prototype, 'setEnketoError');
+      sinon.stub(TasksActions.prototype, 'setTaskGroupContact');
+      sinon.stub(TasksActions.prototype, 'setTaskGroupContactLoading');
+      store.refreshState();
+
+      await component.performAction({ ...action });
+
+      expect(xmlFormsService.getFormConfig.callCount).to.equal(1);
+      expect(xmlFormsService.getFormConfig.args[0]).to.deep.equal(['task', 'myform']);
+      expect(formService.render.callCount).to.equal(1);
+      expect(formService.render.args[0][0]).to.deep.include({
+        selector: '#task-report',
+        formConfig,
+        instanceData: action.content,
+      });
+
+      expect(tasksForContactService.getLeafPlaceAncestor.callCount).to.equal(1);
+      expect(tasksForContactService.getLeafPlaceAncestor.args[0]).to.deep.equal(['my_contact']);
+      expect((<any>TasksActions.prototype.setTaskGroupContactLoading).callCount).to.equal(1);
+      expect((<any>TasksActions.prototype.setTaskGroupContactLoading).args[0]).to.deep.equal([true]);
+      await Promise.resolve();
+      expect((<any>TasksActions.prototype.setTaskGroupContact).callCount).to.equal(1);
+      expect((<any>TasksActions.prototype.setTaskGroupContact).args[0]).to.deep.equal([{ any: 'model' }]);
+      expect((<any>TasksActions.prototype.setTaskGroupContactLoading).callCount).to.equal(1);
+
+      const markFormEdited = formService.render.args[0][0].editedListener;
+      const resetFormError = formService.render.args[0][0].valuechangeListener;
+
+      expect(setEnketoEditedStatus.callCount).to.equal(1);
+      expect(setEnketoEditedStatus.args[0]).to.deep.equal([false]);
+      expect((<any>GlobalActions.prototype.setEnketoError).callCount).to.equal(0);
+
+      markFormEdited();
+
+      expect(setEnketoEditedStatus.callCount).to.equal(2);
+      expect(setEnketoEditedStatus.args[1]).to.deep.equal([true]);
+      expect((<any>GlobalActions.prototype.setEnketoError).callCount).to.equal(0);
+
+      resetFormError();
+
+      expect((<any>GlobalActions.prototype.setEnketoError).callCount).to.equal(0);
+
+      store.overrideSelector(Selectors.getEnketoError, 'error');
+      store.refreshState();
+
+      resetFormError();
+
+      expect((<any>GlobalActions.prototype.setEnketoError).callCount).to.equal(1);
+      expect(performanceService.track.calledOnce).to.be.true;
+      expect(stopPerformanceTrackStub.calledOnce).to.be.true;
+      expect(stopPerformanceTrackStub.args[0][0]).to.deep.equal({
+        name: 'enketo:tasks:myform:add:render',
+        recordApdex: true,
+      });
+    });
+
+    it('should catch contact preloading errors', async () => {
+      const formConfig = { doc: { _id: 'myform', title: 'My Form' } };
+      const action = { type: 'report', form: 'myform', content: { contact: { _id: 'the_contact' } } };
+      xmlFormsService.getFormConfig.resolves(formConfig);
+      tasksForContactService.getLeafPlaceAncestor.rejects({ some: 'error' });
+      await compileComponent([]);
+
+      sinon.resetHistory();
+      sinon.stub(TasksActions.prototype, 'setTaskGroupContact');
+      sinon.stub(TasksActions.prototype, 'setTaskGroupContactLoading');
+      sinon.stub(GlobalActions.prototype, 'setEnketoError');
+      sinon.stub();
+      store.refreshState();
+
+      await component.performAction({ ...action });
+
+      expect(xmlFormsService.getFormConfig.callCount).to.equal(1);
+      expect(xmlFormsService.getFormConfig.args[0]).to.deep.equal(['task', 'myform']);
+      expect(formService.render.callCount).to.equal(1);
+      expect(formService.render.args[0][0]).to.deep.include({
+        selector: '#task-report',
+        formConfig,
+        instanceData: { ...action.content },
+      });
+
+      expect(tasksForContactService.getLeafPlaceAncestor.callCount).to.equal(1);
+      expect(tasksForContactService.getLeafPlaceAncestor.args[0]).to.deep.equal(['the_contact']);
+      expect((<any>TasksActions.prototype.setTaskGroupContactLoading).callCount).to.equal(1);
+      expect((<any>TasksActions.prototype.setTaskGroupContactLoading).args[0]).to.deep.equal([true]);
+      await Promise.resolve();
+      expect((<any>TasksActions.prototype.setTaskGroupContact).callCount).to.equal(1);
+      expect((<any>TasksActions.prototype.setTaskGroupContactLoading).callCount).to.equal(1);
+      expect((<any>TasksActions.prototype.setTaskGroupContact).args[0]).to.deep.equal([null]);
+
+      expect(setEnketoEditedStatus.callCount).to.equal(1);
+      expect(setEnketoEditedStatus.args[0]).to.deep.equal([false]);
+      expect((<any>GlobalActions.prototype.setEnketoError).callCount).to.equal(0);
+    });
+  });
+
+  describe('saving', () => {
+    let setEnketoError;
+    let setEnketoSavingStatus;
+    let unsetSelected;
+    let clearNavigation;
+    let setLastSubmittedTask;
+
+    beforeEach(() => {
+      setEnketoError = sinon.stub(GlobalActions.prototype, 'setEnketoError');
+      setEnketoSavingStatus = sinon.stub(GlobalActions.prototype, 'setEnketoSavingStatus');
+      unsetSelected = sinon.stub(GlobalActions.prototype, 'unsetSelected');
+      clearNavigation = sinon.stub(GlobalActions.prototype, 'clearNavigation');
+      setLastSubmittedTask = sinon.stub(TasksActions.prototype, 'setLastSubmittedTask');
+    });
+
+    it('should do nothing if already saving', async () => {
+      xmlFormsService.getFormConfig.resolves({ id: 'myform', doc: { title: 'My Form' } });
+      await compileComponent([]);
+
+      store.overrideSelector(Selectors.getEnketoSavingStatus, true);
+      store.refreshState();
+      await component.save();
+
+      expect(formService.save.callCount).to.equal(0);
+    });
+
+    it('should catch save errors', async () => {
+      const consoleErrorMock = sinon.stub(console, 'error');
+      xmlFormsService.getFormConfig.resolves({ id: 'myform', doc: { title: 'My Form' } });
+      formService.save.rejects({ some: 'error' });
+      store.overrideSelector(Selectors.getEnketoError, 'error');
+      const geoHandle = { geo: 'handle', cancel: sinon.stub() };
+      geolocationService.init.returns(geoHandle);
+      await compileComponent([]);
+      sinon.resetHistory();
+
+      component.form = { the: 'form', config: { doc: { internalId: 'the form id' } } } as any;
+      const saving = component.save();
+
+      expect(setEnketoSavingStatus.callCount).to.equal(1);
+      expect(setEnketoSavingStatus.args[0]).to.deep.equal([true]);
+      expect(setEnketoError.callCount).to.equal(1);
+      expect(setEnketoError.args[0]).to.deep.equal([null]);
+
+      await saving;
+
+      expect(formService.save.callCount).to.equal(1);
+      expect(formService.save.args[0]).to.deep.equal([
+        { the: 'form', config: { doc: { internalId: 'the form id' } } },
+        geoHandle
+      ]);
+
+      expect(setEnketoSavingStatus.callCount).to.equal(2);
+      expect(setEnketoSavingStatus.args[1]).to.deep.equal([false]);
+      expect(setEnketoError.callCount).to.equal(2);
+
+      expect(setEnketoEditedStatus.callCount).to.equal(0);
+      expect(formService.unload.callCount).to.equal(0);
+      expect(clearNavigation.callCount).to.equal(0);
+      expect(router.navigate.callCount).to.equal(0);
+      expect(unsetSelected.callCount).to.equal(0);
+      expect(setLastSubmittedTask.callCount).to.equal(0);
+
+      expect(consoleErrorMock.callCount).to.equal(1);
+      expect(consoleErrorMock.args[0][0]).to.equal('Error submitting form data: ');
+    });
+
+    it('should redirect correctly after save', async () => {
+      xmlFormsService.getFormConfig.resolves({ id: 'myform', doc: { title: 'My Form' } });
+      formService.save.resolves([]);
+      const geoHandle = { geo: 'handle', cancel: sinon.stub() };
+      geolocationService.init.returns(geoHandle);
+
+      await compileComponent([]);
+      sinon.resetHistory();
+
+      component.form = { the: 'form', config: { doc: { internalId: 'the form id' } } } as any;
+
+      const saving = component.save();
+
+      expect(setEnketoSavingStatus.callCount).to.equal(1);
+      expect(setEnketoSavingStatus.args[0]).to.deep.equal([true]);
+      expect(setEnketoError.callCount).to.equal(0);
+
+      await saving;
+
+      expect(formService.save.callCount).to.equal(1);
+      expect(formService.save.args[0]).to.deep.equal([
+        { the: 'form', config: { doc: { internalId: 'the form id' } } },
+        geoHandle
+      ]);
+
+      expect(setEnketoSavingStatus.callCount).to.equal(2);
+      expect(setEnketoSavingStatus.args[1]).to.deep.equal([false]);
+      expect(setEnketoEditedStatus.callCount).to.equal(1);
+      expect(setEnketoEditedStatus.args[0]).to.deep.equal([false]);
+
+      expect(formService.unload.callCount).to.equal(1);
+      expect(formService.unload.args[0]).to.deep.equal([
+        { the: 'form', config: { doc: { internalId: 'the form id' } } }
+      ]);
+      expect(clearNavigation.callCount).to.equal(1);
+
+      expect(router.navigate.callCount).to.equal(1);
+      expect(router.navigate.args[0]).to.deep.equal([['/tasks', 'group']]);
+
+      expect(setEnketoError.callCount).to.equal(0);
+      expect(unsetSelected.callCount).to.equal(1);
+      expect(setLastSubmittedTask.callCount).to.equal(1);
+      expect(setLastSubmittedTask.args[0]).to.deep.equal([component.selectedTask]);
+      expect(performanceService.track.calledOnce).to.be.true;
+      expect(stopPerformanceTrackStub.calledTwice).to.be.true;
+      expect(stopPerformanceTrackStub.args[0][0]).to.deep.equal({
+        name: 'enketo:tasks:the form id:add:user_edit_time',
+      });
+      expect(stopPerformanceTrackStub.args[1][0]).to.deep.equal({
+        name: 'enketo:tasks:the form id:add:save',
+        recordApdex: true,
+      });
+
+      expect(interactionTrackingService.record.args).to.deep.include.members([
+        ['task:form_save', 'the form id'],
+        ['task:complete', 'the form id'],
+      ]);
+    });
+  });
+
+  describe('navigationCancel', () => {
+    it('should call navigation cancel', async () => {
+      await compileComponent();
+      const navigationCancel = sinon.stub(GlobalActions.prototype, 'navigationCancel');
+      component.form = { config: { doc: { internalId: 'the form id' } } } as any;
+      component.navigationCancel();
+      expect(navigationCancel.callCount).to.equal(1);
+      expect(navigationCancel.args[0]).to.deep.equal([]);
+      expect(interactionTrackingService.record.args).to.deep.include(['task:cancel', 'the form id']);
+    });
+  });
+
+  describe('canDeactivate', () => {
+    let navigationCancel;
+    beforeEach(async () => {
+      navigationCancel = sinon.stub(GlobalActions.prototype, 'navigationCancel');
+      await compileComponent();
+    });
+
+    it('should return true when not edited', () => {
+      store.overrideSelector(Selectors.getEnketoEditedStatus, false);
+      store.overrideSelector(Selectors.getCancelCallback, sinon.stub());
+      store.refreshState();
+      fixture.detectChanges();
+
+      expect(component.canDeactivate('')).to.equal(true);
+      expect(navigationCancel.callCount).to.equal(0);
+    });
+
+    it('should return true when no cancel callback', () => {
+      store.overrideSelector(Selectors.getEnketoEditedStatus, true);
+      store.overrideSelector(Selectors.getCancelCallback, null);
+      store.refreshState();
+      fixture.detectChanges();
+
+      expect(component.canDeactivate('')).to.equal(true);
+      expect(navigationCancel.callCount).to.equal(0);
+    });
+
+    it('should return false otherwise', () => {
+      store.overrideSelector(Selectors.getEnketoEditedStatus, true);
+      store.overrideSelector(Selectors.getCancelCallback, sinon.stub());
+      store.refreshState();
+      fixture.detectChanges();
+
+      expect(component.canDeactivate('theurl')).to.equal(false);
+      expect(navigationCancel.callCount).to.equal(1);
+      expect(navigationCancel.args[0]).to.deep.equal(['theurl']);
+    });
+  });
+});

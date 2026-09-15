@@ -1,0 +1,23 @@
+@import 'variables';
+
+/**
+ * Touch / no-hover devices can't reveal a native `title` tooltip. Elements with a title are made
+ * focusable (tabindex="0") and, on focus, MobileTooltipDirective renders the title in a CDK overlay
+ * that is positioned to stay within the viewport (any trigger position, text length, or direction).
+ * The overlay is appended at the document level, so these styles are global.
+ */
+.cdk-overlay-container .mm-mobile-tooltip {
+  pointer-events: none;
+
+  .mm-mobile-tooltip__content {
+    max-width: calc(100vw - 16px);
+    padding: 5px 8px;
+    font-size: @font-extra-small;
+    line-height: @font-small;
+    color: @tooltip-text;
+    background-color: @tooltip-background;
+    border-radius: @radius-size-small;
+    white-space: normal;
+    overflow-wrap: break-word;
+  }
+}

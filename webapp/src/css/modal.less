@@ -1,0 +1,172 @@
+mm-modal-layout {
+  mm-panel-header {
+    padding: 24px;
+    border: none;
+    .panel-header-title {
+      font-size: @font-XXL;
+      font-weight: normal;
+      letter-spacing: normal;
+    }
+  }
+
+  .modal-body {
+    overflow-y: auto;
+    min-height: 50px;
+    max-height: 75vh;
+    padding: 0 24px;
+    letter-spacing: normal;
+    textarea {
+      margin: 0;
+      width: 100%;
+      padding: 5px;
+    }
+
+    .datepicker {
+      max-width: 300px;
+    }
+
+    .help-block > label {
+      color: @mat-font-color;
+      font-weight: normal;
+    }
+
+    .has-error .form-control {
+      border-color: @error-color;
+    }
+
+    .modal-footer {
+      padding: 24px 0;
+      margin-bottom: 0;
+    }
+  }
+
+  .modal-footer {
+    border: none;
+    padding: 24px;
+    .mat-mdc-button,
+    .mat-mdc-unelevated-button {
+      margin-left: 5px;
+    }
+  }
+
+  .modal-error,
+  .has-error > .help-block{
+    color: @error-color;
+    width: 100%;
+    text-align: left;
+  }
+
+  .enketo-modal,
+  .modal-body training-cards-confirm {
+    &.content-pane {
+      position: relative;
+    }
+
+    .item-content {
+      padding: 0;
+      background: none;
+      & > .body {
+        margin: 0;
+      }
+    }
+
+    .modal-body {
+      overflow: hidden;
+    }
+
+    .enketo {
+      .or h2,
+      .or h3,
+      .or h4,
+      .form-footer,
+      .label,
+      .question,
+      .note,
+      .invalid-constraint,
+      .invalid-required,
+      .or-appearance-android-app-launcher .android-app-launcher-actions {
+        padding-left: 0;
+        padding-right: 0;
+      }
+
+      .or-appearance-summary {
+        .or-appearance-h1:not(.disabled) {
+          padding-left: 5px;
+          padding-right: 5px;
+        }
+
+        .or-appearance-li:not(.disabled):before {
+          left: -10px;
+        }
+      }
+
+      form.pages [role=page].current {
+        margin: 0;
+        display: block;
+        max-height: @training-cards-page-height;
+        overflow-y: auto;
+        padding-bottom: @training-cards-footer-height;
+      }
+    }
+
+    #form-title {
+      font-size: @font-XXL;
+      font-weight: normal;
+      letter-spacing: normal;
+      border: none;
+      background: @form-background-color;
+      width: 100%;
+    }
+
+    .form-footer {
+      position: absolute;
+      bottom: 0;
+      margin: 0;
+      background: @form-background-color;
+      padding: 20px 0;
+      z-index: 20;
+      .btn,
+      .btn:active,
+      .btn:focus {
+        outline: none;
+        box-shadow: none;
+        text-decoration: none;
+      }
+    }
+  }
+
+  &:not(.has-error) .enketo-modal .modal-footer {
+    padding: 0;
+  }
+
+  &.has-error .enketo-modal .modal-body {
+    padding-top: 40px;
+  }
+
+  .enketo-modal training-cards-confirm .modal-footer {
+    margin-bottom: 20px;
+  }
+}
+
+@media (max-width: @media-mobile) {
+  mm-modal-layout {
+    .enketo-modal {
+      .enketo {
+        .form-footer {
+          .btn.btn-link.cancel {
+            display: inline-block;
+          }
+
+          .previous-page {
+            float: none;
+          }
+        }
+      }
+
+      // The form's title is hidden by default for mobile devices; but in training cards, the title is displayed.
+      #form-title {
+        display: inline-block;
+      }
+    }
+  }
+}

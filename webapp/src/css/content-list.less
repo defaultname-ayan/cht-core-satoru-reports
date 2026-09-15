@@ -1,0 +1,368 @@
+@import "variables";
+
+.content-row {
+  cursor: pointer;
+  border-left: 5px solid transparent;
+  border-bottom: 1px solid @separator-color;
+  position: relative;
+
+  &.primary {
+    background-color: @separator-color;
+  }
+
+  &.unread > a {
+    &:before {
+      content: '';
+      background: @unread-color;
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 50px;
+      height: 4px;
+      border-bottom-left-radius: 10px;
+      border-top-left-radius: 10px;
+    }
+    .content .date {
+      color: @unread-color;
+      font-weight: bold;
+    }
+  }
+
+  .date {
+    color: @label-color;
+    white-space: nowrap;
+  }
+
+  &.overdue {
+    .date {
+      color: @overdue-color;
+      font-weight: bold;
+    }
+
+    &.visit-count .summary p {
+      color: @overdue-color;
+    }
+  }
+
+  input[type="checkbox"] {
+    display: none;
+    float: left;
+    margin-right: 5px;
+  }
+
+  > a {
+    display: flex;
+    align-items: center;
+    min-height: 70px;
+    padding: 10px 20px 10px 8px;
+    color: inherit;
+
+    &:hover,
+    &:focus {
+      text-decoration: none;
+    }
+
+    .icon {
+      align-self: start;
+      margin: 5px 7px 5px 0;
+      img,
+      svg {
+        height: @icon-small;
+        width: @icon-small;
+      }
+    }
+
+    .content {
+      flex-grow: 1;
+      display: flex;
+      flex-direction: column;
+      align-content: center;
+      min-width: 0; /* magic to make the ellipsis work: https://css-tricks.com/flexbox-truncated-text/ */
+
+      h4 {
+        line-height: 1.2rem;
+      }
+
+      h4,
+      p {
+        margin: 0;
+      }
+
+      .date,
+      .detail {
+        font-size: @font-small;
+      }
+
+      .heading,
+      .summary,
+      .detail {
+        margin: 2px 0;
+      }
+
+      .heading {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+      }
+
+      .summary {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+      }
+
+      .heading h4,
+      .detail .lineage,
+      .summary p {
+        text-overflow: ellipsis;
+        overflow: hidden;
+        white-space: nowrap;
+      }
+
+      .heading .visits {
+        font-size: @font-XXL;
+        line-height: @font-medium;
+        font-weight: bold;
+
+        &.warning, &.danger {
+          &:before {
+            content: @high-risk-icon;
+            color: @high-risk-color;
+            font-family: FontAwesome;
+            margin-right: 3px;
+            font-size: @font-medium;
+            vertical-align: middle;
+          }
+        }
+      }
+
+      .summary .visits {
+        font-size: @font-small;
+        font-weight: bold;
+      }
+
+      .visits {
+        &.warning {
+          color: @visits-goal-incomplete;
+        }
+
+        &.danger {
+          color: @high-risk-color;
+        }
+
+        &.success {
+          color: @visits-goal-done;
+        }
+      }
+    }
+  }
+
+  &.visit-count > a {
+    padding-right: 10px;
+  }
+
+  &.muted.visit-count {
+    .summary p {
+      color: @muted-state-color;
+    }
+    .visits {
+      &.warning, &.danger, &.success {
+        color: @muted-state-color;
+        &:before {
+          display: none;
+        }
+      }
+    }
+  }
+}
+
+.action {
+  background-color: @separator-color;
+}
+
+.contacts .action .content-row {
+  &:hover {
+    border-left-color: transparent;
+  }
+
+  & > a {
+    min-height: inherit;
+
+    .fa {
+      right: 10px;
+      position: absolute;
+    }
+  }
+}
+
+.inbox.reports .content-row > a .content {
+  .heading h4,
+  .detail .lineage,
+  .summary p {
+    text-overflow: initial;
+    overflow: initial;
+    white-space: initial;
+  }
+}
+
+.reports,
+.contacts .reports {
+  .content-row {
+    &.selected, &.selected-to-view {
+      background-color: @reports-highlight;
+    }
+    &:hover {
+      border-left-color: @reports-color;
+    }
+  }
+}
+
+.trainings .content-row {
+  &.selected, &.selected-to-view {
+    background-color: @training-highlight;
+  }
+
+  &:hover {
+    border-left-color: @training-color;
+  }
+
+  &.completed .mat-icon-check {
+    padding-top: 6px;
+    color: @completed-state-color;
+  }
+}
+
+.contacts .content-row {
+  &.selected {
+    background-color: @contacts-highlight;
+  }
+  &:hover {
+    border-left-color: @contacts-color;
+  }
+}
+
+.messages .content-row {
+  outline: none;
+  &.selected {
+    background-color: @messages-highlight;
+  }
+  &:hover {
+    border-left-color: @messages-color;
+  }
+}
+
+.tasks,
+.contacts .tasks {
+  .content-row {
+    &.selected {
+      background-color: @tasks-highlight;
+    }
+    &:hover {
+      border-left-color: @tasks-color;
+    }
+  }
+}
+
+.select-mode-available {
+  .content-row input[type="checkbox"],
+  .select-all input[type="checkbox"] {
+    accent-color: @checkbox-selected-color;
+    display: inline;
+    width: 20px;
+    height: 20px;
+    margin: 20px 7px 20px 10px
+  }
+
+  .select-all {
+    display: flex;
+    align-items: center;
+    border-bottom: solid 1px @checkbox-border-color;
+    padding: 15px;
+
+    input[type="checkbox"] {
+      margin: 0;
+    }
+
+    .select-all-label {
+      margin-left: 15px;
+      cursor: pointer;
+    }
+  }
+}
+
+mm-multiselect-bar {
+  .multiselect-bar-container {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .desktop {
+    display: flex;
+  }
+
+  .select-all-label,
+  .selection-count .minimal,
+  .deselect-all {
+    display: none;
+  }
+
+  a.bulk-delete {
+    &:hover {
+      text-decoration: none;
+    }
+
+    span {
+      color: @text-normal-color;
+    }
+  }
+}
+
+@media (max-width: @media-mobile) {
+  .select-mode-available .select-all {
+    display: none;
+  }
+
+  mm-multiselect-bar {
+    flex-grow: 2;
+
+    .multiselect-bar-container {
+      height: 50px;
+      margin: 0;
+    }
+
+    .mobile {
+      display: flex;
+    }
+
+    .desktop,
+    .bulk-delete .bulk-delete-label,
+    .selection-count .count-label {
+      display: none;
+    }
+
+    .select-all-label,
+    .selection-count,
+    .selection-count .minimal,
+    .deselect-all {
+      display: inline-block;
+    }
+
+    .bulk-delete-icon {
+      font-size: @font-XXL;
+      margin-right: 15px;
+    }
+
+    .select-all-label {
+      margin-left: 28px;
+      color: @text-normal-color;
+    }
+
+    .deselect-all {
+      font-size: @font-extra-large;
+      color: @text-normal-color;
+      margin: 0px 15px;
+    }
+  }
+}

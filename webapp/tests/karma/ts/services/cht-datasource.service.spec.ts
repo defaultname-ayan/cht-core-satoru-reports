@@ -1,0 +1,603 @@
+import sinon from 'sinon';
+import { expect } from 'chai';
+import { fakeAsync, TestBed, tick } from '@angular/core/testing';
+import { DOC_IDS } from '@medic/constants';
+
+import { CHTDatasourceService } from '@mm-services/cht-datasource.service';
+import { SettingsService } from '@mm-services/settings.service';
+import { ChangesService } from '@mm-services/changes.service';
+import { SessionService } from '@mm-services/session.service';
+import { DbService } from '@mm-services/db.service';
+import { TranslateService } from '@mm-services/translate.service';
+import { CustomResourceService } from '@mm-services/custom-resource.service';
+
+describe('CHTScriptApiService service', () => {
+  let service: CHTDatasourceService;
+  let sessionService;
+  let settingsService;
+  let changesService;
+  let dbService;
+  let medicDb;
+  let translateService;
+  let customResourceService;
+
+  beforeEach(() => {
+    sessionService = { userCtx: sinon.stub(), isOnlineOnly: sinon.stub() };
+    settingsService = { get: sinon.stub() };
+    changesService = { subscribe: sinon.stub().returns({ unsubscribe: sinon.stub() }) };
+    medicDb = { get: sinon.stub().rejects({ status: 404 }) };
+    dbService = { get: sinon.stub().returns(medicDb) };
+    translateService = { instant: sinon.stub() };
+    customResourceService = { getResource: sinon.stub(), init: sinon.stub().resolves() };
+
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: SessionService, useValue: sessionService },
+        { provide: SettingsService, useValue: settingsService },
+        { provide: ChangesService, useValue: changesService },
+        { provide: DbService, useValue: dbService },
+        { provide: TranslateService, useValue: translateService },
+        { provide: CustomResourceService, useValue: customResourceService },
+      ]
+    });
+
+    service = TestBed.inject(CHTDatasourceService);
+  });
+
+  afterEach(() => {
+    sinon.restore();
+  });
+
+  describe('init', () => {
+
+    it('should initialise service for offline user', async () => {
+      settingsService.get.resolves();
+      const userCtx = { hello: 'world' };
+      sessionService.userCtx.returns(userCtx);
+      sessionService.isOnlineOnly.returns(false);
+
+      await service.isInitialized();
+
+      expect(changesService.subscribe.callCount).to.equal(1);
+      expect(changesService.subscribe.args[0][0].key).to.equal('cht-script-api-settings-changes');
+      expect(changesService.subscribe.args[0][0].filter).to.be.a('function');
+      expect(changesService.subscribe.args[0][0].callback).to.be.a('function');
+      expect(settingsService.get.callCount).to.equal(1);
+      expect(sessionService.isOnlineOnly.calledOnceWithExactly(userCtx)).to.be.true;
+      expect(dbService.get.callCount).to.equal(2);
+      expect(medicDb.get.calledOnceWithExactly(DOC_IDS.EXTENSION_LIBS, { attachments: true })).to.be.true;
+      expect(customResourceService.init.calledOnceWithExactly()).to.be.true;
+    });
+
+    it('should initialise service for online user', async () => {
+      settingsService.get.resolves();
+      const userCtx = { hello: 'world' };
+      sessionService.userCtx.returns(userCtx);
+      sessionService.isOnlineOnly.returns(true);
+
+      await service.isInitialized();
+
+      expect(changesService.subscribe.callCount).to.equal(1);
+      expect(changesService.subscribe.args[0][0].key).to.equal('cht-script-api-settings-changes');
+      expect(changesService.subscribe.args[0][0].filter).to.be.a('function');
+      expect(changesService.subscribe.args[0][0].callback).to.be.a('function');
+      expect(settingsService.get.callCount).to.equal(1);
+      expect(sessionService.isOnlineOnly.calledOnceWithExactly(userCtx)).to.be.true;
+      expect(dbService.get.calledOnceWithExactly()).to.be.true;
+      expect(medicDb.get.calledOnceWithExactly(DOC_IDS.EXTENSION_LIBS, { attachments: true })).to.be.true;
+      expect(customResourceService.init.calledOnceWithExactly()).to.be.true;
+    });
+
+    it('should return versioned api', async () => {
+      settingsService.get.resolves();
+      await service.isInitialized();
+
+      const result = await service.get();
+
+      expect(result).to.contain.keys([ 'v1' ]);
+      expect(result.v1).to.contain.keys([
+        'hasPermissions',
+        'hasAnyPermission',
+        'getExtensionLib',
+        'translate',
+        'getResource',
+        'person',
+        'analytics'
+      ]);
+      expect(result.v1.hasPermissions).to.be.a('function');
+      expect(result.v1.hasAnyPermission).to.be.a('function');
+      expect(result.v1.getExtensionLib).to.be.a('function');
+      expect(result.v1.translate).to.be.a('function');
+      expect(result.v1.getResource).to.be.a('function');
+      expect(result.v1.person).to.be.a('object');
+      expect(result.v1.analytics).to.be.a('object');
+    });
+
+    it('should initialize extension libs', async () => {
+      settingsService.get.resolves();
+      medicDb.get.resolves({
+        _attachments: {
+          'bar.js': { data: btoa('module.exports = (a) => a + a') },
+          'foo.js': { data: btoa('module.exports = function() { return "foo"; }') },
+        }
+      });
+      await service.isInitialized();
+
+      expect(medicDb.get.calledOnceWithExactly(DOC_IDS.EXTENSION_LIBS, { attachments: true })).to.be.true;
+
+      const result = await service.get();
+
+      const foo = result.v1.getExtensionLib('foo.js');
+      expect(foo).to.be.a('function');
+      expect(foo()).to.equal('foo');
+
+      const bar = result.v1.getExtensionLib('bar.js');
+      expect(bar).to.be.a('function');
+      expect(bar('hi')).to.equal('hihi');
+
+      const baz = result.v1.getExtensionLib('baz.js');
+      expect(baz).to.be.undefined;
+    });
+
+    it('should not fail when extension libs doc does not exist', async () => {
+      settingsService.get.resolves();
+      medicDb.get.rejects({ status: 404 });
+      await service.isInitialized();
+
+      expect(medicDb.get.calledOnceWithExactly(DOC_IDS.EXTENSION_LIBS, { attachments: true })).to.be.true;
+
+      const result = await service.get();
+
+      expect(result.v1.getExtensionLib('foo.js')).to.be.undefined;
+    });
+  });
+
+  describe('bind()', () => {
+    const settings = { hello: 'settings' } as const;
+    const userCtx = { hello: 'world' } as const;
+
+    beforeEach(() => {
+      settingsService.get.resolves(settings);
+      sessionService.userCtx.returns(userCtx);
+    });
+
+    [true, false].forEach((isOnlineOnly) => {
+      it(`binds to a data context when isOnlineOnly is ${isOnlineOnly}`, async () => {
+        sessionService.isOnlineOnly.returns(isOnlineOnly);
+        const innerFn = sinon.stub().resolves('hello world');
+        const outerFn = sinon
+          .stub()
+          .returns(innerFn);
+
+        const returnedFn = service.bind(outerFn);
+
+        expect(outerFn.notCalled).to.be.true;
+        expect(innerFn.notCalled).to.be.true;
+
+        const result = await returnedFn('hello', 'world');
+
+        expect(result).to.equal('hello world');
+        expect(outerFn.calledOnce).to.be.true;
+        const [dataContext, ...other] = outerFn.args[0];
+        expect(other).to.be.empty;
+        expect(dataContext.bind).to.be.a('function');
+        expect(innerFn.calledOnceWithExactly('hello', 'world')).to.be.true;
+        expect(changesService.subscribe.calledOnce).to.be.true;
+        expect(changesService.subscribe.args[0][0].key).to.equal('cht-script-api-settings-changes');
+        expect(changesService.subscribe.args[0][0].filter).to.be.a('function');
+        expect(changesService.subscribe.args[0][0].callback).to.be.a('function');
+        expect(sessionService.userCtx.calledOnceWithExactly()).to.be.true;
+        expect(settingsService.get.calledOnceWithExactly()).to.be.true;
+        expect(medicDb.get.calledOnceWithExactly(DOC_IDS.EXTENSION_LIBS, { attachments: true })).to.be.true;
+        expect(sessionService.isOnlineOnly.calledOnceWithExactly(userCtx)).to.be.true;
+        expect(dbService.get.callCount).to.equal(isOnlineOnly ? 1 : 2);
+      });
+    });
+
+    it('surfaces exceptions thrown by bound function', async () => {
+      sessionService.isOnlineOnly.returns(true);
+      const expectedError = new Error('hello world');
+      const innerFn = sinon.stub().rejects(expectedError);
+      const outerFn = sinon
+        .stub()
+        .returns(innerFn);
+
+      const returnedFn = service.bind(outerFn);
+
+      expect(outerFn.notCalled).to.be.true;
+      expect(innerFn.notCalled).to.be.true;
+
+      await expect(returnedFn()).to.be.rejectedWith(expectedError);
+
+      expect(outerFn.calledOnce).to.be.true;
+      const [dataContext, ...other] = outerFn.args[0];
+      expect(other).to.be.empty;
+      expect(dataContext.bind).to.be.a('function');
+      expect(innerFn.calledOnceWithExactly()).to.be.true;
+      expect(changesService.subscribe.calledOnce).to.be.true;
+      expect(changesService.subscribe.args[0][0].key).to.equal('cht-script-api-settings-changes');
+      expect(changesService.subscribe.args[0][0].filter).to.be.a('function');
+      expect(changesService.subscribe.args[0][0].callback).to.be.a('function');
+      expect(sessionService.userCtx.calledOnceWithExactly()).to.be.true;
+      expect(settingsService.get.calledOnceWithExactly()).to.be.true;
+      expect(medicDb.get.calledOnceWithExactly(DOC_IDS.EXTENSION_LIBS, { attachments: true })).to.be.true;
+      expect(sessionService.isOnlineOnly.calledOnceWithExactly(userCtx)).to.be.true;
+      expect(dbService.get.calledOnceWithExactly()).to.be.true;
+    });
+  });
+
+  describe('bindGenerator()', () => {
+    const settings = { hello: 'settings' } as const;
+    const userCtx = { hello: 'world' } as const;
+
+    beforeEach(() => {
+      settingsService.get.resolves(settings);
+      sessionService.userCtx.returns(userCtx);
+    });
+
+    [true, false].forEach((isOnlineOnly) => {
+      it(`binds to a data context when isOnlineOnly is ${isOnlineOnly}`, async () => {
+        sessionService.isOnlineOnly.returns(isOnlineOnly);
+        const strings = ['hello', 'world'];
+        const mockGenerator = async function* (input: string[]) {
+          for (const s of input) {
+            yield s;
+          }
+        };
+        const outerFn = sinon
+          .stub()
+          .returns(mockGenerator);
+
+        const returnedFn = service.bindGenerator(outerFn);
+
+        expect(outerFn.notCalled).to.be.true;
+
+        const returnedGen = returnedFn(strings);
+        const results: string[] = [];
+        for await (const s of returnedGen) {
+          results.push(s);
+        }
+
+        expect(results).to.deep.equal(strings);
+        expect(outerFn.calledOnce).to.be.true;
+        const [dataContext, ...other] = outerFn.args[0];
+        expect(other).to.be.empty;
+        expect(dataContext.bind).to.be.a('function');
+        expect(changesService.subscribe.calledOnce).to.be.true;
+        expect(changesService.subscribe.args[0][0].key).to.equal('cht-script-api-settings-changes');
+        expect(changesService.subscribe.args[0][0].filter).to.be.a('function');
+        expect(changesService.subscribe.args[0][0].callback).to.be.a('function');
+        expect(sessionService.userCtx.calledOnceWithExactly()).to.be.true;
+        expect(settingsService.get.calledOnceWithExactly()).to.be.true;
+        expect(medicDb.get.calledOnceWithExactly(DOC_IDS.EXTENSION_LIBS, { attachments: true })).to.be.true;
+        expect(sessionService.isOnlineOnly.calledOnceWithExactly(userCtx)).to.be.true;
+        expect(dbService.get.callCount).to.equal(isOnlineOnly ? 1 : 2);
+      });
+    });
+
+    it('surfaces exceptions thrown by bound function', async () => {
+      sessionService.isOnlineOnly.returns(true);
+      const expectedError = new Error('hello world');
+      // eslint-disable-next-line require-yield
+      const mockGenerator = async function* (_: string[]) {
+        throw expectedError;
+      };
+      const outerFn = sinon
+        .stub()
+        .returns(mockGenerator);
+
+      const returnedFn = service.bindGenerator(outerFn);
+
+      expect(outerFn.notCalled).to.be.true;
+
+      const returnedGen = returnedFn(['input']);
+      await expect(returnedGen.next()).to.be.rejectedWith(expectedError);
+
+      expect(outerFn.calledOnce).to.be.true;
+      const [dataContext, ...other] = outerFn.args[0];
+      expect(other).to.be.empty;
+      expect(dataContext.bind).to.be.a('function');
+      expect(changesService.subscribe.calledOnce).to.be.true;
+      expect(changesService.subscribe.args[0][0].key).to.equal('cht-script-api-settings-changes');
+      expect(changesService.subscribe.args[0][0].filter).to.be.a('function');
+      expect(changesService.subscribe.args[0][0].callback).to.be.a('function');
+      expect(sessionService.userCtx.calledOnceWithExactly()).to.be.true;
+      expect(settingsService.get.calledOnceWithExactly()).to.be.true;
+      expect(medicDb.get.calledOnceWithExactly(DOC_IDS.EXTENSION_LIBS, { attachments: true })).to.be.true;
+      expect(sessionService.isOnlineOnly.calledOnceWithExactly(userCtx)).to.be.true;
+      expect(dbService.get.calledOnceWithExactly()).to.be.true;
+    });
+  });
+
+  describe('v1.translate()', () => {
+    it('should call TranslateService.instant with key', async () => {
+      translateService.instant.returns('Translated Text');
+      await service.isInitialized();
+      const api = await service.get();
+
+      const result = api.v1.translate('some.key');
+
+      expect(result).to.equal('Translated Text');
+      expect(translateService.instant.calledOnceWithExactly('some.key', undefined)).to.be.true;
+    });
+
+    it('should call TranslateService.instant with key and params', async () => {
+      translateService.instant.returns('Hello John');
+      await service.isInitialized();
+      const api = await service.get();
+
+      const result = api.v1.translate('greeting', { name: 'John' });
+
+      expect(result).to.equal('Hello John');
+      expect(translateService.instant.calledOnceWithExactly('greeting', { name: 'John' })).to.be.true;
+    });
+  });
+
+  describe('v1.getResource()', () => {
+    it('should call CustomResourceService.getResource', async () => {
+      const resourceData = { content_type: 'image/png', data: 'base64data' };
+      customResourceService.getResource.returns(resourceData);
+      await service.isInitialized();
+      const api = await service.get();
+
+      const result = api.v1.getResource('icon');
+
+      expect(result).to.deep.equal(resourceData);
+      expect(customResourceService.getResource.calledOnceWithExactly('icon')).to.be.true;
+    });
+
+    it('should return null when resource does not exist', async () => {
+      customResourceService.getResource.returns(null);
+      await service.isInitialized();
+      const api = await service.get();
+
+      const result = api.v1.getResource('nonexistent');
+
+      expect(result).to.be.null;
+      expect(customResourceService.getResource.calledOnceWithExactly('nonexistent')).to.be.true;
+    });
+  });
+
+  describe('v1.translate()', () => {
+    it('should call TranslateService.instant with key', async () => {
+      translateService.instant.returns('Translated Text');
+      await service.isInitialized();
+      const api = await service.get();
+
+      const result = api.v1.translate('some.key');
+
+      expect(result).to.equal('Translated Text');
+      expect(translateService.instant.calledOnceWithExactly('some.key', undefined)).to.be.true;
+    });
+
+    it('should call TranslateService.instant with key and params', async () => {
+      translateService.instant.returns('Hello John');
+      await service.isInitialized();
+      const api = await service.get();
+
+      const result = api.v1.translate('greeting', { name: 'John' });
+
+      expect(result).to.equal('Hello John');
+      expect(translateService.instant.calledOnceWithExactly('greeting', { name: 'John' })).to.be.true;
+    });
+  });
+
+  describe('v1.hasPermissions()', () => {
+
+    it('should return true when user has the permission', async () => {
+      settingsService.get.resolves({
+        permissions: {
+          can_edit: [ 'chw_supervisor' ],
+          can_configure: [ 'nurse' ]
+        },
+        roles: { chw_supervisor: {}, gateway: {} }
+      });
+      sessionService.userCtx.returns({ roles: [ 'chw_supervisor', 'gateway' ] });
+      await service.isInitialized();
+      const api = await service.get();
+
+      const result = api.v1.hasPermissions('can_edit');
+
+      expect(result).to.be.true;
+    });
+
+    it('should return false when user doesnt have the permission', async () => {
+      settingsService.get.resolves({
+        permissions: {
+          can_edit: [ 'chw_supervisor' ],
+          can_configure: [ 'nurse' ]
+        }
+      });
+      sessionService.userCtx.returns({ roles: [ 'chw_supervisor', 'gateway' ] });
+      await service.isInitialized();
+      const api = await service.get();
+
+      const result = api.v1.hasPermissions('can_create_people');
+
+      expect(result).to.be.false;
+    });
+
+    it('should react to settings changes', fakeAsync(async () => {
+      settingsService.get.resolves({
+        permissions: {
+          can_edit: [ 'chw_supervisor' ],
+          can_configure: [ 'nurse' ]
+        },
+        roles: { nurse: {} }
+      });
+      sessionService.userCtx.returns({ roles: [ 'nurse' ] });
+      await service.isInitialized();
+      const changesCallback = changesService.subscribe.args[0][0].callback;
+      const api = await service.get();
+
+      const permissionNotFound = api.v1.hasPermissions('can_create_people');
+
+      settingsService.get.resolves({
+        permissions: {
+          can_edit: [ 'chw_supervisor' ],
+          can_configure: [ 'nurse' ],
+          can_create_people: [ 'chw_supervisor', 'nurse' ]
+        },
+        roles: { nurse: {} }
+      });
+      sinon.resetHistory();
+      changesCallback();
+      tick();
+
+      const permissionFound = api.v1.hasPermissions('can_create_people');
+
+      expect(permissionNotFound).to.be.false;
+      expect(permissionFound).to.be.true;
+      expect(sessionService.userCtx.callCount).to.equal(0);
+      expect(settingsService.get.callCount).to.equal(1);
+    }));
+
+    it('should return true when user is admin', async () => {
+      settingsService.get.resolves({
+        permissions: {
+          can_edit: [ 'chw_supervisor' ],
+          can_configure: [ 'nurse' ]
+        }
+      });
+      sessionService.userCtx.returns({ roles: [ '_admin' ] });
+      await service.isInitialized();
+      const api = await service.get();
+
+      const result = api.v1.hasPermissions('can_create_people');
+
+      expect(result).to.be.true;
+    });
+
+    it('should return false when settings doesnt have roles assigned for the permission', async () => {
+      settingsService.get.resolves({
+        permissions: {
+          can_edit: [ 'chw_supervisor' ],
+          can_configure: null
+        }
+      });
+      sessionService.userCtx.returns({ roles: [ 'chw_supervisor' ] });
+      await service.isInitialized();
+      const api = await service.get();
+
+      const result = api.v1.hasPermissions('can_configure');
+
+      expect(result).to.be.false;
+    });
+  });
+
+  describe('v1.hasAnyPermission()', () => {
+    it('should return true when user has the any of the permissions', async () => {
+      settingsService.get.resolves({
+        permissions: {
+          can_backup_facilities: [ 'national_admin', 'district_admin' ],
+          can_export_messages: [ 'national_admin', 'district_admin', 'analytics' ],
+          can_add_people: [ 'national_admin', 'district_admin' ],
+          can_add_places: [ 'national_admin', 'district_admin' ],
+          can_roll_over: [ 'national_admin', 'district_admin' ]
+        },
+        roles: { national_admin: {}, district_admin: {}, analytics: {} }
+      });
+      sessionService.userCtx.returns({ roles: [ 'district_admin' ] });
+      await service.isInitialized();
+      const api = await service.get();
+
+      const result = api.v1.hasAnyPermission([
+        [ 'can_backup_facilities' ],
+        [ 'can_export_messages', 'can_roll_over' ],
+        [ 'can_add_people', 'can_add_places' ],
+      ]);
+
+      expect(result).to.be.true;
+    });
+
+    it('should return false when user doesnt have the permission', async () => {
+      settingsService.get.resolves({
+        permissions: {
+          can_backup_facilities: [ 'national_admin' ],
+          can_backup_people: [ 'national_admin' ],
+        }
+      });
+      sessionService.userCtx.returns({ roles: [ 'district_admin' ] });
+      await service.isInitialized();
+      const api = await service.get();
+
+      const result = api.v1.hasAnyPermission([
+        [ 'can_backup_facilities', 'can_backup_people' ],
+        [ 'can_export_messages', 'can_roll_over' ],
+        [ 'can_add_people', 'can_add_places' ]
+      ]);
+
+      expect(result).to.be.false;
+    });
+
+    it('should react to settings changes', fakeAsync(async () => {
+      settingsService.get.resolves({
+        permissions: {
+          can_edit: [ 'chw_supervisor', 'nurse' ],
+          can_configure: [ 'nurse' ]
+        },
+        roles: { nurse: {} }
+      });
+      sessionService.userCtx.returns({ roles: [ 'nurse' ] });
+      await service.isInitialized();
+      const changesCallback = changesService.subscribe.args[0][0].callback;
+      const api = await service.get();
+
+      const permissionNotFound = api.v1.hasAnyPermission([[ 'can_create_people' ], [ '!can_edit' ]]);
+
+      settingsService.get.resolves({
+        permissions: {
+          can_edit: [ 'chw_supervisor' ],
+          can_configure: [ 'nurse' ],
+          can_create_people: [ 'chw_supervisor', 'nurse' ]
+        },
+        roles: { nurse: {} }
+      });
+      sinon.resetHistory();
+      changesCallback();
+      tick();
+
+      const permissionFound = api.v1.hasAnyPermission([[ 'can_create_people' ], [ '!can_edit' ]]);
+
+      expect(permissionNotFound).to.be.false;
+      expect(permissionFound).to.be.true;
+      expect(sessionService.userCtx.callCount).to.equal(0);
+      expect(settingsService.get.callCount).to.equal(1);
+    }));
+
+    it('should return true when user is admin', async () => {
+      settingsService.get.resolves({
+        permissions: {
+          can_edit: [ 'chw_supervisor' ],
+          can_configure: [ 'nurse' ]
+        }
+      });
+      sessionService.userCtx.returns({ roles: [ '_admin' ] });
+      await service.isInitialized();
+      const api = await service.get();
+
+      const result = api.v1.hasAnyPermission([[ 'can_create_people' ], [ 'can_edit', 'can_configure' ]]);
+
+      expect(result).to.be.true;
+    });
+
+    it('should return false when settings doesnt have roles assigned for the permission', async () => {
+      settingsService.get.resolves({
+        permissions: {
+          can_edit: [ 'chw_supervisor' ],
+          can_configure: null,
+          can_create_people: null,
+          can_backup_facilities: null
+        }
+      });
+      sessionService.userCtx.returns({ roles: [ 'chw_supervisor' ] });
+      await service.isInitialized();
+      const api = await service.get();
+
+      const result = api.v1.hasAnyPermission([[ 'can_configure', 'can_create_people' ], [ 'can_backup_facilities' ] ]);
+
+      expect(result).to.be.false;
+    });
+  });
+
+});

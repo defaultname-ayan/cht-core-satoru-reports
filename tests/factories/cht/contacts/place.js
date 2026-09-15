@@ -1,0 +1,56 @@
+const Factory = require('rosie').Factory;
+const { v7: uuid } = require('uuid');
+const { CONTACT_TYPES } = require('@medic/constants');
+
+const place = () => {
+  return new Factory()
+    .sequence('_id', uuid)
+    .attr('parent', '')
+    .attr('type', '')
+    .attr('is_name_generated', 'true')
+    .attr('name', 'A Place 1')
+    .attr('external_id', '')
+    .attr('notes', '')
+    .attr('place_id', uuid)
+    .attr('reported_date', () => new Date())
+    .attr('contact')
+    .attr('contact_type', '');
+};
+
+
+const generatePlaces = (types = [CONTACT_TYPES.DISTRICT_HOSPITAL, 
+  CONTACT_TYPES.HEALTH_CENTER, CONTACT_TYPES.CLINIC]) => {
+  return types.map((type, index) => {
+    return place().build({
+      name: `${type.replace('_', ' ')}${index}`,
+      type: type,
+    });
+  });
+};
+
+const linkPlaces = (places) => {
+  const linkedPlaces = new Map();
+  places.forEach((place, index) => {
+    const parent = places[index - 1] ? {
+      _id: places[index - 1]._id,
+      parent: {
+        _id: places[index - 1].parent._id || ''
+      }
+    } : '';
+    place.parent = parent;
+    linkedPlaces.set(place.type, place);
+  });
+  return linkedPlaces;
+};
+
+const generateHierarchy = (types) => {
+  const places = generatePlaces(types);
+  const linkedPlaces = linkPlaces(places);
+  return linkedPlaces;
+};
+
+
+module.exports = {
+  generateHierarchy,
+  place
+};

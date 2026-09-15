@@ -1,0 +1,32 @@
+services:
+  haproxy:
+    build:
+      context: ../
+    ports:
+      - 127.0.0.1:15984:5984
+    environment:
+      COUCHDB_SERVERS: mock-couchdb1,mock-couchdb2,mock-couchdb3
+      COUCHDB_USER: someuser
+      COUCHDB_PASSWORD: insecure_pw
+      HAPROXY_IP: 0.0.0.0
+      HAPROXY_PORT: 5984
+      HEALTHCHECK_ADDR: haproxy-healthcheck
+    depends_on:
+      - mock-couchdb1
+      - haproxy-healthcheck
+
+  mock-couchdb1: &mockserver
+    image: nginx:1-alpine-slim
+    volumes:
+      - ./mock-config/conf.d/:/etc/nginx/conf.d/:ro
+  mock-couchdb2: *mockserver
+  mock-couchdb3: *mockserver
+
+  haproxy-healthcheck:
+    build: ../../haproxy-healthcheck
+    ports:
+      - 127.0.0.1:5555:5555
+    environment:
+      COUCHDB_SERVERS: mock-couchdb1,mock-couchdb2,mock-couchdb3
+      COUCHDB_USER: someuser
+      COUCHDB_PASSWORD: insecure_pw

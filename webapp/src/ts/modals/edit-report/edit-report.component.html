@@ -1,0 +1,20 @@
+<mm-modal-layout
+  id="edit-report"
+  [processing]="processing"
+  [error]="error"
+  [titleKey]="'Update Facility'"
+  [submitKey]="'save'"
+  [submittingKey]="'saving'"
+  [isFlatButton]="true"
+  (onCancel)="close()"
+  (onSubmit)="submit()"
+>
+  <form>
+    <fieldset>
+      <div class="control-group">
+        <label>{{'Please select a facility' | translate}}</label>
+        <select name="facility" autocomplete="off"></select>
+      </div>
+    </fieldset>
+  </form>
+</mm-modal-layout>

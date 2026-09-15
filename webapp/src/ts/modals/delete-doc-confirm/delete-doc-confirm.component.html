@@ -1,0 +1,11 @@
+<mm-modal-layout
+  id="delete-confirm"
+  [processing]="processing"
+  [error]="error"
+  [titleKey]="'bulkdelete.confirm.title'"
+  [submitKey]="'bulkdelete.confirm.action'"
+  (onCancel)="close()"
+  (onSubmit)="submit()"
+>
+  <p>{{ 'confirm.delete' | translate }}</p>
+</mm-modal-layout>

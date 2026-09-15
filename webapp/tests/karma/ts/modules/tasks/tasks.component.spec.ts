@@ -1,0 +1,454 @@
+import { ComponentFixture, fakeAsync, flush, TestBed, tick } from '@angular/core/testing';
+import { MatIconModule } from '@angular/material/icon';
+import { MockStore, provideMockStore } from '@ngrx/store/testing';
+import { RouterTestingModule } from '@angular/router/testing';
+import { TranslateFakeLoader, TranslateLoader, TranslateModule } from '@ngx-translate/core';
+import { expect } from 'chai';
+import * as moment from 'moment';
+import sinon from 'sinon';
+
+import { ChangesService } from '@mm-services/changes.service';
+import { ContactTypesService } from '@mm-services/contact-types.service';
+import { RulesEngineService } from '@mm-services/rules-engine.service';
+import { TasksActions } from '@mm-actions/tasks';
+import { GlobalActions } from '@mm-actions/global';
+import { PerformanceService } from '@mm-services/performance.service';
+import { TasksComponent } from '@mm-modules/tasks/tasks.component';
+import { NavigationComponent } from '@mm-components/navigation/navigation.component';
+import { ToolBarComponent } from '@mm-components/tool-bar/tool-bar.component';
+import { Selectors } from '@mm-selectors/index';
+import { NavigationService } from '@mm-services/navigation.service';
+import { LineageModelGeneratorService } from '@mm-services/lineage-model-generator.service';
+import { TasksSidebarFilterComponent } from '@mm-modules/tasks/tasks-sidebar-filter.component';
+import { PlaceHierarchyService } from '@mm-services/place-hierarchy.service';
+import { SessionService } from '@mm-services/session.service';
+import { DbService } from '@mm-services/db.service';
+import { TelemetryService } from '@mm-services/telemetry.service';
+import { DOC_TYPES, CONTACT_TYPES } from '@medic/constants';
+import { InteractionTrackingService } from '@mm-services/interaction-tracking.service';
+
+describe('TasksComponent', () => {
+  let getComponent;
+  let changesService;
+  let rulesEngineService;
+  let performanceService;
+  let stopPerformanceTrackStub;
+  let contactTypesService;
+  let clock;
+  let store;
+  let lineageModelGeneratorService;
+  let telemetryService;
+  let interactionTrackingService;
+
+  let component: TasksComponent;
+  let fixture: ComponentFixture<TasksComponent>;
+
+  beforeEach(() => {
+    changesService = { subscribe: sinon.stub().returns({ unsubscribe: sinon.stub() }) };
+    rulesEngineService = {
+      isEnabled: sinon.stub().resolves(true),
+      fetchTaskDocsForAllContacts: sinon.stub().resolves([]),
+      contactsMarkedAsDirty: sinon.stub(),
+    };
+    stopPerformanceTrackStub = sinon.stub();
+    performanceService = { track: sinon.stub().returns({ stop: stopPerformanceTrackStub }) };
+    contactTypesService = {
+      includes: sinon.stub(),
+    };
+    lineageModelGeneratorService = { reportSubjects: sinon.stub().resolves([]) };
+    telemetryService = { record: sinon.stub() };
+    interactionTrackingService = { startSession: sinon.stub(), record: sinon.stub(), endSession: sinon.stub() };
+
+    TestBed.configureTestingModule({
+      imports: [
+        TranslateModule.forRoot({ loader: { provide: TranslateLoader, useClass: TranslateFakeLoader } }),
+        RouterTestingModule,
+        MatIconModule,
+        TasksComponent,
+        TasksSidebarFilterComponent,
+        NavigationComponent,
+        ToolBarComponent,
+      ],
+      providers: [
+        provideMockStore(),
+        { provide: ChangesService, useValue: changesService },
+        { provide: RulesEngineService, useValue: rulesEngineService },
+        { provide: PerformanceService, useValue: performanceService },
+        { provide: ContactTypesService, useValue: contactTypesService },
+        { provide: NavigationService, useValue: {} },
+        { provide: LineageModelGeneratorService, useValue: lineageModelGeneratorService },
+        // Needed because of facility filter
+        { provide: PlaceHierarchyService, useValue: { get: sinon.stub().resolves([]) } },
+        // Needed because of Tasks Sidebar Filter
+        { provide: SessionService, useValue: { isOnlineOnly: sinon.stub().returns(false) } },
+        { provide: DbService, useValue: { get: sinon.stub().resolves() } },
+        { provide: TelemetryService, useValue: telemetryService },
+        { provide: InteractionTrackingService, useValue: interactionTrackingService },
+      ],
+    });
+
+    getComponent = () => {
+      return TestBed.compileComponents().then(() => {
+        fixture = TestBed.createComponent(TasksComponent);
+        component = fixture.componentInstance;
+        store = TestBed.inject(MockStore);
+        fixture.detectChanges();
+      });
+    };
+  });
+
+  afterEach(() => {
+    store.resetSelectors();
+    sinon.restore();
+    clock?.restore();
+  });
+
+  it('should ngOnDestroy should unsubscribe and clear state', async () => {
+    await getComponent();
+
+    const clearTaskList = sinon.stub(TasksActions.prototype, 'clearTaskList');
+    const setTasksLoaded = sinon.stub(TasksActions.prototype, 'setTasksLoaded');
+    const clearTaskGroup = sinon.stub(TasksActions.prototype, 'clearTaskGroup');
+    const spySubscriptionsUnsubscribe = sinon.spy(component.subscription, 'unsubscribe');
+
+    component.ngOnDestroy();
+
+    expect(spySubscriptionsUnsubscribe.callCount).to.equal(1);
+    expect(clearTaskList.callCount).to.equal(1);
+    expect(setTasksLoaded.callCount).to.equal(1);
+    expect(setTasksLoaded.args[0]).to.deep.equal([false]);
+    expect(clearTaskGroup.callCount).to.equal(1);
+  });
+
+  it('should clear global filters on init so a search from another tab does not leak in', async () => {
+    const clearFilters = sinon.stub(GlobalActions.prototype, 'clearFilters');
+
+    await getComponent(); // triggers ngOnInit via detectChanges
+
+    expect(clearFilters.calledOnceWithExactly()).to.be.true;
+  });
+
+  it('initial state before resolving tasks', async () => {
+    rulesEngineService.isEnabled.callsFake(() => new Promise(() => {}));
+    await getComponent();
+
+    expect(component.loading).to.be.true;
+    expect(!!component.hasTasks).to.be.false;
+    expect(!!component.errorStack).to.be.false;
+    expect(!!component.tasksDisabled).to.be.false;
+  });
+
+  it('rules engine is disabled', async () => {
+    rulesEngineService.isEnabled.resolves(false);
+
+    await new Promise(resolve => {
+      sinon.stub(TasksActions.prototype, 'setTasksList').callsFake(resolve);
+      getComponent();
+    });
+
+    expect(component.loading).to.be.false;
+    expect(!!component.hasTasks).to.be.false;
+    expect(!!component.errorStack).to.be.false;
+    expect(component.tasksDisabled).to.be.true;
+  });
+
+  it('rules engine throws in initialization', fakeAsync(async () => {
+    await getComponent();
+    flush();
+
+    sinon.resetHistory();
+    const consoleErrorMock = sinon.stub(console, 'error');
+    const setTasksListStub = sinon.stub(TasksActions.prototype, 'setTasksList');
+    rulesEngineService.isEnabled.rejects('error');
+
+    component.ngOnInit();
+    flush();
+
+    expect(component.loading).to.be.false;
+    expect(!!component.hasTasks).to.be.false;
+    expect(!!component.errorStack).to.be.true;
+    expect(!!component.tasksDisabled).to.be.false;
+    expect(setTasksListStub.args).to.deep.eq([[[]]]);
+    expect(consoleErrorMock.callCount).to.equal(1);
+    expect(consoleErrorMock.args[0][0]).to.equal('Error getting tasks for all contacts');
+  }));
+
+  it('tasks render', async () => {
+    const now = moment('2020-10-20');
+    const futureDate = now.clone().add(3, 'days');
+    const pastDate = now.clone().subtract(3, 'days');
+    clock = sinon.useFakeTimers({ now: now.valueOf(), toFake: ['Date']});
+    const taskDocs = [
+      {
+        _id: '1',
+        emission: {
+          _id: 'e1',
+          dueDate: futureDate.format('YYYY-MM-DD'),
+          owner: 'a',
+          overdue: false,
+          date: new Date(futureDate.valueOf())
+        },
+        owner: 'a'
+      },
+      {
+        _id: '2',
+        emission: {
+          _id: 'e2',
+          dueDate: pastDate.format('YYYY-MM-DD'),
+          owner: 'b',
+          overdue: true,
+          date: new Date(pastDate.valueOf()),
+        },
+        owner: 'b'
+      },
+    ];
+    const expectedTasks = [
+      {
+        _id: 'e1',
+        dueDate: futureDate.format('YYYY-MM-DD'),
+        overdue: false,
+        date: new Date(futureDate.valueOf()),
+        owner: 'a',
+        lineage: [],
+        lineageIds: ['a'],
+      },
+      {
+        _id: 'e2',
+        dueDate: pastDate.format('YYYY-MM-DD'),
+        overdue: true,
+        date: new Date(pastDate.valueOf()),
+        owner: 'b',
+        lineage: [],
+        lineageIds: ['b'],
+      },
+    ];
+
+    rulesEngineService.fetchTaskDocsForAllContacts.resolves(taskDocs);
+    await new Promise(resolve => {
+      sinon.stub(TasksActions.prototype, 'setTasksList').callsFake(resolve);
+      getComponent();
+    });
+
+    expect(component.loading).to.be.false;
+    expect(component.tasksDisabled).to.be.false;
+    expect(!!component.errorStack).to.be.false;
+    expect((<any>TasksActions.prototype.setTasksList).args).to.deep.eq([[expectedTasks]]);
+  });
+
+  it('rules engine yields no tasks', async () => {
+    await new Promise(resolve => {
+      sinon.stub(TasksActions.prototype, 'setTasksList').callsFake(resolve);
+      getComponent();
+    });
+
+    expect(component.loading).to.be.false;
+    expect(component.tasksDisabled).to.be.false;
+    expect(component.hasTasks).to.be.false;
+    expect(!!component.errorStack).to.be.false;
+    expect(rulesEngineService.fetchTaskDocsForAllContacts.callCount).to.eq(1);
+    expect((<any>TasksActions.prototype.setTasksList).args).to.deep.eq([[[]]]);
+  });
+
+  it('changes feed', async () => {
+    contactTypesService.includes
+      .withArgs(sinon.match({ type: 'person' })).returns(true)
+      .withArgs(sinon.match({ type: CONTACT_TYPES.CLINIC })).returns(true)
+      .withArgs(sinon.match({ type: 'contact' })).returns(true);
+
+    await new Promise(resolve => {
+      sinon.stub(TasksActions.prototype, 'setTasksList').callsFake(resolve);
+      getComponent();
+    });
+
+    const changesFeed = changesService.subscribe.args[0][0];
+    expect(!!changesFeed.filter({})).to.be.false;
+    expect(changesFeed.filter({ id: 'person', doc: { _id: 'person', type: 'person' }})).to.be.true;
+    expect(changesFeed.filter({ id: 'clinic', doc: { _id: 'clinic', type: CONTACT_TYPES.CLINIC }})).to.be.true;
+    expect(changesFeed.filter({ id: 'report', doc: { _id: 'report',
+      type: DOC_TYPES.DATA_RECORD, form: 'form' }})).to.be.true;
+    expect(changesFeed.filter({ id: 'task', doc: { _id: 'task', type: 'task' }})).to.be.true;
+
+    expect(changesFeed.filter({ id: 'foo', doc: { _id: 'a',
+      type: DOC_TYPES.DATA_RECORD, form: undefined }})).to.be.false;
+  });
+
+  it('should react to rulesEngine emissions', fakeAsync(async () => {
+    await new Promise(resolve => {
+      sinon.stub(TasksActions.prototype, 'setTasksList').callsFake(resolve);
+      getComponent();
+    });
+
+    expect(rulesEngineService.contactsMarkedAsDirty.callCount).to.equal(1);
+    expect(rulesEngineService.fetchTaskDocsForAllContacts.callCount).to.equal(1);
+
+    const callback = rulesEngineService.contactsMarkedAsDirty.args[0][0];
+    callback();
+    tick(1000); // the refresh tasks call is debounced for 1 second
+
+    expect(rulesEngineService.fetchTaskDocsForAllContacts.callCount).to.equal(2);
+  }));
+
+  it('should record telemetry on initial load', async () => {
+    await new Promise(resolve => {
+      sinon.stub(TasksActions.prototype, 'setTasksList').callsFake(resolve);
+      getComponent();
+    });
+
+    expect(rulesEngineService.fetchTaskDocsForAllContacts.callCount).to.eq(1);
+    expect(performanceService.track.calledOnce).to.be.true;
+    expect(stopPerformanceTrackStub.calledOnceWith({ name: 'tasks:load', recordApdex: true })).to.be.true;
+  });
+
+  it('should record telemetry with visible task count on recalculation', async () => {
+    const taskDocs = [
+      { _id: '1', emission: { _id: 'e1', owner: 'a' }, owner: 'a' },
+      { _id: '2', emission: { _id: 'e2', owner: 'b' }, owner: 'b' },
+      { _id: '3', emission: { _id: 'e3', owner: 'c' }, owner: 'c' },
+    ];
+    rulesEngineService.fetchTaskDocsForAllContacts.resolves(taskDocs);
+
+    await new Promise(resolve => {
+      sinon.stub(TasksActions.prototype, 'setTasksList').callsFake(resolve);
+      getComponent();
+    });
+
+    expect(telemetryService.record.calledOnce).to.be.true;
+    expect(telemetryService.record.args[0]).to.deep.equal(['tasks:all-tasks', 3]);
+  });
+
+  it('should should record telemetry on refresh', fakeAsync(async () => {
+    sinon.stub(TasksActions.prototype, 'setTasksLoaded');
+    rulesEngineService.isEnabled.resolves(true);
+
+    await new Promise(resolve => {
+      sinon.stub(TasksActions.prototype, 'setTasksList').callsFake(resolve);
+      getComponent();
+    });
+    flush();
+
+    expect((<any>TasksActions.prototype.setTasksLoaded).callCount).to.equal(1);
+    expect((<any>TasksActions.prototype.setTasksLoaded).args[0]).to.deep.equal([true]);
+
+    store.overrideSelector(Selectors.getTasksLoaded, true);
+    store.refreshState();
+
+    const changesArgs = changesService.subscribe.args[0][0];
+    const change = { doc: { type: 'task' } };
+    changesArgs.callback(change);
+    tick(2000); // wait for debounced function to fire
+    flush();
+
+    expect(rulesEngineService.fetchTaskDocsForAllContacts.callCount).to.eq(2);
+    expect(performanceService.track.calledTwice).to.be.true;
+    expect(stopPerformanceTrackStub.calledTwice).to.be.true;
+    expect(stopPerformanceTrackStub.args[0][0]).to.deep.equal({ name: 'tasks:load', recordApdex: true });
+    expect(stopPerformanceTrackStub.args[1][0]).to.deep.equal({ name: 'tasks:refresh', recordApdex: true });
+    expect((<any>TasksActions.prototype.setTasksLoaded).callCount).to.equal(1);
+  }));
+
+  describe('interaction tracking', () => {
+    it('opens a tasks session on init and records task_list:open and task_list:loaded', async () => {
+      await new Promise(resolve => {
+        sinon.stub(TasksActions.prototype, 'setTasksList').callsFake(resolve);
+        getComponent();
+      });
+
+      expect(interactionTrackingService.startSession.args).to.deep.equal([['tasks']]);
+      const actions = interactionTrackingService.record.args.map(a => a[0]);
+      expect(actions).to.include.members(['task_list:open', 'task_list:loaded']);
+    });
+
+    it('records task_list:leave and ends the session on destroy', async () => {
+      await getComponent();
+      sinon.stub(TasksActions.prototype, 'clearTaskList');
+      sinon.stub(TasksActions.prototype, 'setTasksLoaded');
+      sinon.stub(TasksActions.prototype, 'clearTaskGroup');
+      interactionTrackingService.record.resetHistory();
+
+      component.ngOnDestroy();
+
+      expect(interactionTrackingService.record.args).to.deep.include(['task_list:leave']);
+      expect(interactionTrackingService.endSession.callCount).to.equal(1);
+    });
+  });
+
+  describe('listTrackBy', () => {
+    it('should return task id', () => {
+      expect(component.listTrackBy(10, { _id: 'aaa' })).to.equal('aaa');
+    });
+    it('should nullcheck', () => {
+      expect(component.listTrackBy(0, false)).to.equal(undefined);
+    });
+  });
+
+  describe('lineage and breadcrumbs', () => {
+    const taskLineages = [
+      {
+        _id: 'a',
+        lineage: [
+          { name: 'Amy Johnsons Household' },
+          { name: 'St Elmos Concession' },
+          { name: 'Chattanooga Village' },
+          { name: 'CHW Bettys Area' },
+          null,
+        ],
+      },
+      {
+        _id: 'b',
+        lineage: [
+          { name: 'Amy Johnsons Household' },
+          { name: 'St Elmos Concession' },
+          { name: 'Chattanooga Village' },
+          null,
+          null,
+        ],
+      },
+    ];
+    const taskDocs = [
+      {
+        _id: '1',
+        emission: { _id: 'e1', dueDate: '2020-10-20', date: moment('2020-10-20').toDate(), overdue: true, owner: 'a' },
+        forId: 'a',
+        owner: 'a',
+      },
+      {
+        _id: '2',
+        emission: { _id: 'e2', dueDate: '2020-10-20', date: moment('2020-10-20').toDate(), overdue: true, owner: 'b' },
+        forId: 'b',
+        owner: 'b'
+      },
+    ];
+
+    it('should set lineage data on tasks', async () => {
+      const expectedTasks = [
+        {
+          _id: 'e1',
+          date: moment('2020-10-20').toDate(),
+          dueDate: '2020-10-20',
+          lineage: [ 'Amy Johnsons Household', 'St Elmos Concession', 'Chattanooga Village', 'CHW Bettys Area' ],
+          lineageIds: ['a'],
+          overdue: true,
+          owner: 'a',
+        },
+        {
+          _id: 'e2',
+          date: moment('2020-10-20').toDate(),
+          dueDate: '2020-10-20',
+          lineage: [ 'Amy Johnsons Household', 'St Elmos Concession', 'Chattanooga Village' ],
+          lineageIds: ['b'],
+          overdue: true,
+          owner: 'b',
+        },
+      ];
+      rulesEngineService.fetchTaskDocsForAllContacts.resolves(taskDocs);
+      lineageModelGeneratorService.reportSubjects.resolves(taskLineages);
+
+      await new Promise(resolve => {
+        sinon.stub(TasksActions.prototype, 'setTasksList').callsFake(resolve);
+        getComponent();
+      });
+
+      expect((<any>TasksActions.prototype.setTasksList).args).to.deep.equal([[expectedTasks]]);
+    });
+  });
+});

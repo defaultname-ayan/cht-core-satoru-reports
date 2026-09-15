@@ -1,0 +1,701 @@
+const fs = require('fs');
+const modalPage = require('@page-objects/default/common/modal.wdio.page');
+const constants = require('@constants');
+
+const ELEMENT_DISPLAY_PAUSE = 500; // 500ms
+const RELOAD_SYNC_TIMEOUT = 10000;
+
+const getGenericAria = (text) => $(`aria/${text}`);
+
+const tabsSelector = {
+  getAllButtonLabels: async () => await $$('.header .tabs .button-label'),
+  getAllButtonIcons: async () => await $$('.header .tabs .mm-icon span.fa:empty'),
+  messagesTab: () => $('#messages-tab'),
+  taskTab: () => $('#tasks-tab'),
+  analyticsTab: () => $('#analytics-tab'),
+};
+const { generateScreenshot } = require('@utils/screenshots');
+
+const hamburgerMenuSelectors = {
+  hamburgerMenu: () => $('aria/Application menu'),
+  closeSideBarMenu: () => $('.panel-header-close'),
+  sideBarMenuTitle: () => $('aria/Menu'),
+  appManagementButton: () => $('aria/App Management'),
+  syncButton: () => $('aria/Sync now'),
+  syncSuccess: () => $('aria/All reports synced'),
+  syncFailed: () => $('aria/Reports to sync'),
+  syncUnknown: () => $('aria/Unable to connect'),
+  syncInProgress: () => $('mat-sidenav-content').$('*="Currently syncing"'),
+  aboutButton: () => $('aria/About'),
+  trainingMaterialsButton: () => $('aria/Training materials'),
+  userSettingsButton: () => $('aria/User settings'),
+  feedbackMenuOption: () => $('aria/Report bug'),
+  logoutButton: () => $('aria/Log out'),
+};
+
+const kebabMenuSelectors = {
+  moreOptionsMenu: () => $('aria/Actions menu'),
+  edit: () => $('aria/Edit'),
+  delete: () => $('aria/Delete'),
+  export: () => $('aria/Export'),
+  review: () => $('aria/Review'),
+};
+
+const FAST_ACTION_TRIGGER = '.fast-action-trigger';
+const FAST_ACTION_LIST_CONTAINER = '.fast-action-content-wrapper';
+const fabSelectors = {
+  fastActionFAB: () => $$(`${FAST_ACTION_TRIGGER} .fast-action-fab-button`),
+  fastActionFlat: () => $(`${FAST_ACTION_TRIGGER} .fast-action-flat-button`),
+  multipleActions: () => $(`${FAST_ACTION_TRIGGER}[test-id="multiple-actions-menu"]`),
+  fastActionListContainer: () => $(FAST_ACTION_LIST_CONTAINER),
+  fastActionListCloseButton: () => $(`${FAST_ACTION_LIST_CONTAINER} .panel-header .panel-header-close`),
+  fastActionById: (id) => $(`${FAST_ACTION_LIST_CONTAINER} .fast-action-item[test-id="${id}"]`),
+  fastActionItems: () => $$(`${FAST_ACTION_LIST_CONTAINER} .fast-action-item`),
+  reportsFastActionFAB: () => $('#reports-content .fast-action-fab-button mat-icon'),
+};
+const hamburgerMenuItemSelector = 'mat-sidenav-content';
+const logoutButton = () => $('aria/Log out');
+const syncButton = () => $('aria/Sync now');
+const hamburgerMenuItemByOption = (menuOption) => $(hamburgerMenuItemSelector).$(`//span[text()="${menuOption}"]`);
+const messagesTab = () => $('#messages-tab');
+const analyticsTab = () => $('#analytics-tab');
+const getReportsButtonLabel = () => $('#reports-tab .button-label');
+const getMessagesButtonLabel = () => $('#messages-tab .button-label');
+const getTasksButtonLabel = () => $('#tasks-tab .button-label');
+
+const userSettingsSelectors = {
+  editProfileButton: () => $('.user .configuration.page i.fa-user'),
+};
+
+const getJsonErrorText = async () => await $('pre').getText();
+
+const isHamburgerMenuOpen = async () => {
+  return await hamburgerMenuSelectors.closeSideBarMenu().isDisplayed();
+};
+
+const openHamburgerMenu = async () => {
+  if (!(await isHamburgerMenuOpen())) {
+    await closeFastActionList();
+    await closeReloadModal(false);
+    await hamburgerMenuSelectors.hamburgerMenu().click();
+    await browser.pause(ELEMENT_DISPLAY_PAUSE);
+  }
+  await hamburgerMenuSelectors.closeSideBarMenu().waitForDisplayed();
+};
+
+const closeHamburgerMenu = async () => {
+  if (await isHamburgerMenuOpen()) {
+    await hamburgerMenuSelectors.closeSideBarMenu().click();
+  }
+  await hamburgerMenuSelectors.sideBarMenuTitle().waitForDisplayed({ reverse: true });
+};
+
+const openMoreOptionsMenu = async () => {
+  await kebabMenuSelectors.moreOptionsMenu().click();
+};
+
+const performMenuAction = async (actionSelector, isOptionsMenuOpen = false) => {
+  if (!isOptionsMenuOpen){
+    await openMoreOptionsMenu();
+  }
+  const actionElement = await actionSelector();
+  await actionElement.click();
+};
+
+const accessEditOption = async (isOptionsMenuOpen = false) => {
+  await performMenuAction(kebabMenuSelectors.edit, isOptionsMenuOpen);
+};
+
+const accessDeleteOption = async () => {
+  await performMenuAction(kebabMenuSelectors.delete);
+};
+
+const accessExportOption = async () => {
+  await performMenuAction(kebabMenuSelectors.export);
+};
+
+const accessReviewOption = async () => {
+  await performMenuAction(kebabMenuSelectors.review);
+};
+
+const toggleMenuAndCaptureScreenshot = async (menuOption, reverse, pageName, screenshotName) => {
+  await openHamburgerMenu();
+  await hamburgerMenuItemByOption(menuOption).waitForDisplayed({ reverse });
+  await generateScreenshot(pageName, screenshotName);
+  if (reverse) {
+    await closeHamburgerMenu();
+  } else {
+    await hamburgerMenuItemByOption(menuOption).click();
+  }
+};
+
+const waitForSnackbarToClose = async () => {
+  const snackbar = await $('#snackbar.active .snackbar-message');
+  if (await snackbar.isExisting()) {
+    await snackbar.waitForDisplayed({ reverse: true });
+  }
+};
+
+const hideSnackbar = () => {
+  // snackbar appears in the bottom of the page for 5 seconds when certain actions are made
+  // for example when filling a form, or creating a contact and intercepts all clicks in the FAB and Flat buttons
+  // this action is temporary, and will be undone with a refresh
+  return browser.execute(() => {
+    // eslint-disable-next-line no-undef
+    window.jQuery('.snackbar-content').hide();
+  });
+};
+
+const hasVisibleLoader = async () => {
+  const loaders = await $$('.loader');
+  for (const loader of loaders) {
+    try {
+      return await loader.isDisplayed();
+    } catch {
+      // Ignore stale element errors
+    }
+  }
+  return false;
+};
+
+const waitForLoaderToDisappear = async (element, timeout = 10000) => {
+  const loaderSelector = '.loader';
+  const loader = await (element ? element.$(loaderSelector) : $(loaderSelector));
+  await loader.waitForDisplayed({ reverse: true, timeout });
+};
+
+const waitForLoaders = async (timeout = 5000) => {
+  await browser.waitUntil(async () => {
+    if (await hasVisibleLoader()) {
+      return false;
+    }
+    // Wait for loaders to settle - another loader might appear
+    await browser.pause(200);
+    return !(await hasVisibleLoader());
+  }, {
+    timeoutMsg: 'Waiting for Loading spinners to hide timed out.',
+    timeout
+  });
+};
+
+const waitForAngularLoaded = async (timeout = 60000) => {
+  await hamburgerMenuSelectors.hamburgerMenu().waitForDisplayed({ timeout });
+};
+
+const waitForPageLoaded = async (timeout = 60000) => {
+  // if we immediately check for app loaders, we might bypass the initial page load (the bootstrap loader)
+  // so waiting for the main page to load.
+  await waitForAngularLoaded(timeout);
+
+  await waitForLoaders(timeout);
+};
+
+const clickFastActionById = async (id) => {
+  // Wait for the Angular Material's animation to complete.
+  await browser.pause(ELEMENT_DISPLAY_PAUSE);
+  await fabSelectors.fastActionListContainer().waitForDisplayed();
+  await fabSelectors.fastActionById(id).click();
+};
+
+/**
+ * There are two FABs, one for desktop and another for mobile. This finds the visible FAB.
+ * @returns {Promise<HTMLElement>}
+ */
+const findVisibleFAB = async () => {
+  for (const button of await fabSelectors.fastActionFAB()) {
+    if (await button.isDisplayed()) {
+      return button;
+    }
+  }
+};
+
+const clickFastActionFAB = async ({ actionId, waitForList }) => {
+  await closeHamburgerMenu();
+  waitForList = waitForList === undefined ? await fabSelectors.multipleActions().isExisting() : waitForList;
+  (await findVisibleFAB())?.click();
+  if (waitForList) {
+    await clickFastActionById(actionId);
+  }
+};
+
+const getFastActionItemsLabels = async () => {
+  await closeHamburgerMenu();
+  (await findVisibleFAB())?.click();
+
+  await browser.pause(ELEMENT_DISPLAY_PAUSE);
+  await fabSelectors.fastActionListContainer().waitForDisplayed();
+
+  const items = await fabSelectors.fastActionItems();
+  return await items.map(item => item.getText());
+};
+
+const getFastActionItemsLabelsFlat = async () => {
+  await closeHamburgerMenu();
+  const button = await fabSelectors.fastActionFlat();
+  await button.click();
+
+  await browser.pause(ELEMENT_DISPLAY_PAUSE);
+  await fabSelectors.fastActionListContainer().waitForDisplayed();
+
+  const items = await fabSelectors.fastActionItems();
+  return await items.map(item => item.getText());
+};
+
+const clickFastActionFlat = async ({ actionId, waitForList }) => {
+  await closeHamburgerMenu();
+  await fabSelectors.fastActionFlat().waitForDisplayed();
+
+  waitForList = waitForList === undefined ? await fabSelectors.multipleActions().isExisting() : waitForList;
+  await fabSelectors.fastActionFlat().click();
+  if (waitForList) {
+    await clickFastActionById(actionId);
+  }
+};
+
+const openFastActionReport = async (formId, rightSideAction = true) => {
+  await waitForPageLoaded();
+  await closeHamburgerMenu();
+  if (rightSideAction) {
+    await clickFastActionFAB({ actionId: formId });
+  } else {
+    await clickFastActionFlat({ actionId: formId });
+  }
+  await waitForPageLoaded();
+  await $('#form-title').waitForDisplayed();
+};
+
+const getFastActionFABTextById = async (actionId) => {
+  await clickFastActionFAB({ actionId, waitForList: false });
+  await fabSelectors.fastActionListContainer().waitForDisplayed();
+  return await fabSelectors.fastActionById(actionId).getText();
+};
+
+const getFastActionFlatText = async () => {
+  await waitForSnackbarToClose();
+  await fabSelectors.fastActionFlat().waitForDisplayed();
+  return await fabSelectors.fastActionFlat().getText();
+};
+
+const closeFastActionList = async () => {
+  if (await fabSelectors.fastActionListContainer().isDisplayed()) {
+    await fabSelectors.fastActionListCloseButton().click();
+  }
+};
+
+const isReportActionDisplayed = async () => {
+  return await browser.waitUntil(async () => {
+    const exists = await fabSelectors.reportsFastActionFAB().isExisting();
+    if (exists) {
+      await fabSelectors.reportsFastActionFAB().waitForDisplayed();
+    }
+
+    return exists;
+  });
+};
+
+const isElementPresent = async (selector) => {
+  return await $(selector).isExisting();
+};
+
+const isMessagesListPresent = () => isElementPresent('#message-list');
+
+const isTasksListPresent = () => isElementPresent('#tasks-list');
+
+const isReportsListPresent = () => isElementPresent('#reports-list');
+
+const isPeopleListPresent = () => isElementPresent('#contacts-list');
+
+const isContactTabPresent = () => isElementPresent('#contacts-tab');
+
+const isTargetMenuItemPresent = () => isElementPresent('=Target');
+
+const isTargetAggregatesMenuItemPresent = () => isElementPresent('=Target aggregates');
+
+const isMoreOptionsMenuPresent = async () => await kebabMenuSelectors.moreOptionsMenu().isDisplayed();
+
+const navigateToLogoutModal = async () => {
+  await openHamburgerMenu();
+  const logoutBtn = await hamburgerMenuSelectors.logoutButton();
+  await logoutBtn.waitForDisplayed({ timeout: 5000 });
+  await logoutBtn.click();
+  await modalPage.body().waitForDisplayed({ timeout: 5000 });
+};
+
+const logout = async () => {
+  try {
+    await navigateToLogoutModal();
+    await modalPage.submit();
+    await browser.pause(100); // wait for login page js to execute
+  } catch (err) {
+    console.warn('UI logout failed, performing fallback cookie and storage cleanup:', err.message || err);
+  } finally {
+    try {
+      await browser.deleteCookies();
+      await browser.execute(() => {
+        try {
+          localStorage.clear();
+          sessionStorage.clear();
+        } catch (err2) {
+          console.error('Failed to clear local storage:', err2);
+        }
+      });
+    } catch (err3) {
+      console.warn('Fallback cleanup failed:', err3.message || err3);
+    }
+  }
+};
+
+const getLogoutMessage = async () => {
+  await navigateToLogoutModal();
+  const modal = await modalPage.getModalDetails();
+  return modal.body;
+};
+
+const goToUrl = async (url) => {
+  const currentUrl = await browser.getUrl();
+  const desiredUrl = `${constants.BASE_URL}${url}`.replace(/\/$/, '');
+  if (currentUrl === desiredUrl) {
+    await browser.refresh();
+  } else {
+    await browser.url(url);
+  }
+};
+
+const refresh = async () => {
+  await browser.refresh();
+  await waitForPageLoaded();
+};
+
+const goToBase = async () => {
+  await goToUrl('/');
+  await waitForPageLoaded();
+};
+
+const goToAboutPage = async () => {
+  await goToUrl(`/#/about`);
+  await waitForLoaders();
+};
+
+const goToMessages = async () => {
+  await goToUrl(`/#/messages`);
+  await tabsSelector.messagesTab().waitForDisplayed();
+};
+
+const goToTasks = async (waitForload = true) => {
+  await goToUrl(`/#/tasks`);
+  await tabsSelector.taskTab().waitForDisplayed();
+  if (waitForload) {
+    await waitForPageLoaded();
+  }
+};
+
+const goToReports = async (reportId = '', waitForLoad = true) => {
+  await goToUrl(`/#/reports/${reportId}`);
+  if (waitForLoad) {
+    await waitForPageLoaded();
+  }
+};
+
+const goToPeople = async (contactId = '', waitForLoad = true) => {
+  await goToUrl(`/#/contacts/${contactId}`);
+  if (waitForLoad) {
+    await waitForPageLoaded();
+  }
+};
+
+const goToAnalytics = async () => {
+  await goToUrl(`/#/analytics`);
+  await analyticsTab().waitForDisplayed();
+  await waitForPageLoaded();
+};
+
+const closeReloadModal = async (shouldUpdate, timeout) => {
+  try {
+    timeout = timeout || shouldUpdate ? RELOAD_SYNC_TIMEOUT : ELEMENT_DISPLAY_PAUSE;
+    if (shouldUpdate) {
+      await modalPage.submit(timeout);
+      await waitForAngularLoaded(timeout);
+    } else {
+      await modalPage.cancel(timeout);
+    }
+
+    return true;
+  } catch (err) {
+    (timeout > ELEMENT_DISPLAY_PAUSE) && console.error(err);
+    (timeout > ELEMENT_DISPLAY_PAUSE) && console.error('Reload modal has not showed up');
+    return false;
+  }
+};
+
+const syncAndNotWaitForSuccess = async () => {
+  await openHamburgerMenu();
+  await syncButton().click();
+};
+
+const syncAndWaitForSuccess = async (timeout = RELOAD_SYNC_TIMEOUT) => {
+  let retry = 10;
+  let reloadModalShown = false;
+  do {
+    retry--;
+
+    try {
+      await openHamburgerMenu();
+      if (!await hamburgerMenuSelectors.syncInProgress().isDisplayed({ withinViewport: true })) {
+        await hamburgerMenuSelectors.syncButton().click();
+      }
+
+      await hamburgerMenuSelectors.syncInProgress().waitForDisplayed({ timeout, reverse: true });
+      await browser.waitUntil(async () => {
+        return (await hamburgerMenuSelectors.syncSuccess().isDisplayed()) ||
+               (await modalPage.isDisplayed());
+      }, { timeout });
+
+      // there are some animations happening and a race condition where the previous wait finishes, but the modal is
+      // still not displayed, but appears later and interferes.
+      await browser.pause(200);
+      if (await modalPage.isDisplayed()) {
+        reloadModalShown = true;
+        await closeReloadModal(false, RELOAD_SYNC_TIMEOUT);
+        await openHamburgerMenu();
+      }
+
+      if (await hamburgerMenuSelectors.syncFailed().isDisplayed() ||
+          await hamburgerMenuSelectors.syncUnknown().isDisplayed()) {
+        throw new Error('Failed to sync');
+      }
+
+      return reloadModalShown;
+    } catch (err) {
+      if (err.message !== 'Failed to sync') {
+        console.error(err);
+      }
+    }
+  } while (retry);
+
+  throw new Error('Failed to sync after 10 retries');
+};
+
+const hideModalOverlay = () => {
+  // hides the modal overlay, so it doesn't intercept all clicks
+  // this action is temporary, and will be undone with a refresh
+  return browser.execute(() => {
+    const style = document.createElement('style');
+    style.innerHTML = '.cdk-overlay-backdrop { display: none; }';
+    document.head.appendChild(style);
+  });
+};
+
+const sync = async ({
+  reload = false,
+  serviceWorkerUpdate = false,
+  timeout = RELOAD_SYNC_TIMEOUT
+} = {}) => {
+  await hideModalOverlay();
+
+  const reloadModalShown = await syncAndWaitForSuccess(timeout);
+  // service worker updates require downloading all resources, and then it triggers the update modal.
+  // sometimes this action is not timely with a quick sync.
+  (serviceWorkerUpdate && !reloadModalShown) && await closeReloadModal(false, RELOAD_SYNC_TIMEOUT);
+
+  if (reload) {
+    await browser.refresh();
+    return await waitForPageLoaded();
+  }
+
+  await closeHamburgerMenu();
+};
+
+const openReportBugAndFetchProperties = async () => {
+  await hamburgerMenuSelectors.feedbackMenuOption().click();
+  return await modalPage.getModalDetails();
+};
+
+const isReportBugOpen = () => isElementPresent('#feedback');
+
+const closeReportBug = async () => {
+  if (await isReportBugOpen()) {
+    await modalPage.cancel();
+  }
+};
+
+const openAboutMenu = async () => {
+  await hamburgerMenuSelectors.aboutButton().click();
+  await $('.about.page .mat-primary').waitForDisplayed();
+};
+
+const openUserSettings = async () => {
+  const userSettingsButton = await hamburgerMenuSelectors.userSettingsButton;
+  await userSettingsButton().click();
+};
+
+const openUserSettingsAndFetchProperties = async () => {
+  await openUserSettings();
+  await userSettingsSelectors.editProfileButton().waitForDisplayed();
+};
+
+const openTrainingMaterials = async () => {
+  await hamburgerMenuSelectors.trainingMaterialsButton().click();
+  await waitForPageLoaded();
+};
+
+const openEditProfile = async () => {
+  await userSettingsSelectors.editProfileButton().click();
+  await modalPage.checkModalIsOpen();
+};
+
+const openAppManagement = async () => {
+  await hamburgerMenuSelectors.appManagementButton().click();
+  await $('.navbar-brand').waitForDisplayed();
+};
+
+const getTextForElements = async (elements) => {
+  const elems = await elements();
+  return elems.map(elem => elem.getText());
+};
+
+const getAllButtonLabelsNames = async () => {
+  return await getTextForElements(tabsSelector.getAllButtonLabels);
+};
+
+const getAllButtonFaIconClasses = async () => {
+  const iconElements = await (await tabsSelector.getAllButtonIcons());
+  const iconClasses = await iconElements.map(element => element.getAttribute('class'));
+  return iconClasses.map(classes => classes.split(' ').find(c => c.startsWith('fa-')));
+};
+
+const isMenuOptionEnabled = async (action) => {
+  const parent = await kebabMenuSelectors[action]().parentElement().parentElement();
+  return await parent.getAttribute('aria-disabled') === 'false';
+};
+
+const isMenuOptionVisible = async (action) => {
+  return await kebabMenuSelectors[action]().isDisplayed();
+};
+
+const countInboxItems = async () => await $$('.inbox-items .content-row').length;
+const noMoreElements = (elementTag) => $(`aria/No more ${elementTag}`);
+const loadNextInfiniteScrollPage = async (elementTag, timeout = 15000) => {
+  const initialInboxItemsCount = await countInboxItems();
+  await browser.execute(() => {
+    const container = document.querySelector('.items-container');
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
+  });
+  await browser.waitUntil(
+    async () => (await countInboxItems()) > initialInboxItemsCount || (await noMoreElements(elementTag).isDisplayed()),
+    { timeout, timeoutMsg: 'Infinite scroll did not load new items' }
+  );
+};
+
+const getErrorLog = async () => {
+  await $('error-log').waitForDisplayed();
+
+  const errorMessage = await $('.error-details span').getText();
+  const userDetails = await $$('.error-details dl dd');
+  const errorStack = await $('pre code');
+
+  const username = await userDetails[0].getText();
+  const url = await userDetails[1].getText();
+  return { errorMessage, url, username, errorStack };
+};
+
+const createFormDoc = (path, formId, context = { person: true, place: true }) => {
+  const id = formId || path.split('/').pop();
+  const formXML = fs.readFileSync(`${path}.xml`, 'utf8');
+  return {
+    _id: `form:${id}`,
+    internalId: id,
+    title: id,
+    type: 'form',
+    context: context,
+    _attachments: {
+      xml: {
+        content_type: 'application/octet-stream',
+        data: Buffer.from(formXML).toString('base64'),
+      },
+    },
+  };
+};
+
+const reloadSession = async () => {
+  await browser.reloadSession();
+  await browser.url('/');
+};
+
+module.exports = {
+  tabsSelector,
+  fabSelectors,
+  getJsonErrorText,
+  openHamburgerMenu,
+  closeHamburgerMenu,
+  hamburgerMenuItemByOption,
+  openMoreOptionsMenu,
+  accessEditOption,
+  accessDeleteOption,
+  accessExportOption,
+  accessReviewOption,
+  waitForLoaderToDisappear,
+  waitForAngularLoaded,
+  waitForPageLoaded,
+  clickFastActionFAB,
+  getFastActionItemsLabels,
+  getFastActionItemsLabelsFlat,
+  clickFastActionFlat,
+  openFastActionReport,
+  getFastActionFABTextById,
+  getFastActionFlatText,
+  closeFastActionList,
+  isReportActionDisplayed,
+  isElementPresent,
+  logoutButton,
+  isContactTabPresent,
+  messagesTab,
+  analyticsTab,
+  getReportsButtonLabel,
+  getMessagesButtonLabel,
+  getTasksButtonLabel,
+  hideSnackbar,
+  waitForLoaders,
+  syncButton,
+  toggleMenuAndCaptureScreenshot,
+  closeReloadModal,
+  goToMessages,
+  goToTasks,
+  goToAnalytics,
+  isMessagesListPresent,
+  isTasksListPresent,
+  isPeopleListPresent,
+  isReportsListPresent,
+  isTargetMenuItemPresent,
+  isTargetAggregatesMenuItemPresent,
+  isMoreOptionsMenuPresent,
+  logout,
+  getLogoutMessage,
+  goToUrl,
+  refresh,
+  goToBase,
+  goToAboutPage,
+  goToReports,
+  goToPeople,
+  syncAndNotWaitForSuccess,
+  sync,
+  openReportBugAndFetchProperties,
+  closeReportBug,
+  openAboutMenu,
+  openUserSettings,
+  openTrainingMaterials,
+  openUserSettingsAndFetchProperties,
+  openEditProfile,
+  openAppManagement,
+  getTextForElements,
+  getAllButtonLabelsNames,
+  getAllButtonFaIconClasses,
+  isMenuOptionEnabled,
+  isMenuOptionVisible,
+  loadNextInfiniteScrollPage,
+  getErrorLog,
+  createFormDoc,
+  reloadSession,
+  getGenericAria,
+};

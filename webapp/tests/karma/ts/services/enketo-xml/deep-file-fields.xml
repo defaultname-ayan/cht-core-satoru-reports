@@ -1,0 +1,11 @@
+<my-root-element>
+  <name>Mary</name>
+  <age>10</age>
+  <gender>f</gender>
+  <my_file type="binary">some image data</my_file>
+  <sub_element>
+    <sub_sub_element>
+      <other_file type="binary">some other data</other_file>
+    </sub_sub_element>
+  </sub_element>
+</my-root-element>

@@ -1,0 +1,83 @@
+const TARGET_MET_COLOR = '#76b0b0';
+const TARGET_UNMET_COLOR = '#000000';
+
+const goToTargets = () => browser.url('/#/analytics/targets');
+const filterOptionLabel = () => $('.filter-option-label');
+
+const noTargetFound = () => $('aria/No target found.');
+const noAdminTargets = () => $(
+  'aria/Targets are disabled for admin users. If you need to see targets, login as a normal user.'
+);
+const disabledTargetAggregates = () => $('aria/Target aggregates are disabled');
+const targets = () => $$('.target');
+const targetWrap = () => $('.page .targets');
+const targetTitle = (targetElement) => targetElement.$('.heading .title h2');
+const targetSubtitle = (targetElement) => targetElement.$('.heading .title p');
+const targetGoal = (targetElement) => targetElement.$('.body .count .goal');
+const targetCountNumber = (targetElement) => targetElement.$('.body .count .number');
+const targetCountNumberColor = (targetElement) => targetElement.$('.body .count .number:not(.goal-met)');
+const targetProgressNumber = (targetElement) => targetElement.$('.body .target-progress .number');
+const targetNumberPercent = (targetElement) => targetElement.$('.body .target-progress .number .value');
+const targetNumberPercentCount = (targetElement) => targetElement.$('.body .target-progress .number span:nth-child(2)');
+const targetGoalValue = (targetElement) => targetElement.$('.body .count .goal');
+
+const EMPTY_SELECTION = '.content-pane .item-content.empty-selection';
+const emptySelectionError = () => $(`${EMPTY_SELECTION}.selection-error`);
+const emptySelectionNoError = () => $(`${EMPTY_SELECTION}:not(.selection-error)`);
+
+const getTargetInfo = async (targetElement, includeSubtitle) => {
+  const target = {
+    title: await targetTitle(targetElement).getText()
+  };
+
+  if (includeSubtitle && await targetSubtitle(targetElement).isExisting()) {
+    target.subtitle = await targetSubtitle(targetElement).getText();
+  }
+
+  if (await targetGoal(targetElement).isExisting()) {
+    const fullText = await targetGoalValue(targetElement).getText();
+    target.goal = fullText.split(' ').pop();
+  }
+
+  if (await targetCountNumber(targetElement).isExisting()) {
+    target.count = await targetCountNumber(targetElement).getText();
+  }
+
+  if (await targetCountNumberColor(targetElement).isExisting()) {
+    target.countNumberColor = (await targetCountNumberColor(targetElement).getCSSProperty('color')).parsed.hex;
+  }
+
+  if (await targetProgressNumber(targetElement).isExisting()) {
+    target.percent = await targetNumberPercent(targetElement).getText();
+    target.percentCount = await targetNumberPercentCount(targetElement).getText();
+  }
+
+  return target;
+};
+
+const getTargets = async ({ includeSubtitle = false } = {}) => {
+  await targetWrap().waitForDisplayed();
+  const displayedTargets = await targets();
+
+  const targetList = [];
+  for (const target of displayedTargets) {
+    const info = await getTargetInfo(target, includeSubtitle);
+    targetList.push(info);
+  }
+
+  return targetList;
+};
+
+module.exports = {
+  filterOptionLabel,
+  noTargetFound,
+  noAdminTargets,
+  goToTargets,
+  getTargets,
+  emptySelectionError,
+  emptySelectionNoError,
+  disabledTargetAggregates,
+  TARGET_MET_COLOR,
+  TARGET_UNMET_COLOR
+};
+

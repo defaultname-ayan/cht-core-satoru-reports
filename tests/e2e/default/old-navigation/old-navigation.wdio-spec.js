@@ -1,0 +1,141 @@
+const utils = require('@utils');
+const placeFactory = require('@factories/cht/contacts/place');
+const userFactory = require('@factories/cht/users/users');
+const personFactory = require('@factories/cht/contacts/person');
+const pregnancyFactory = require('@factories/cht/reports/pregnancy');
+const loginPage = require('@page-objects/default/login/login.wdio.page');
+const oldNavigationPage = require('@page-objects/default/old-navigation/old-navigation.wdio.page');
+const messagesPage = require('@page-objects/default/sms/messages.wdio.page');
+const taskPage = require('@page-objects/default/tasks/tasks.wdio.page');
+const genericForm = require('@page-objects/default/enketo/generic-form.wdio.page');
+const reportsPage = require('@page-objects/default/reports/reports.wdio.page');
+const contactPage = require('@page-objects/default/contacts/contacts.wdio.page');
+const targetAggregatesPage = require('@page-objects/default/targets/target-aggregates.wdio.page');
+const { CONTACT_TYPES } = require('@medic/constants');
+const commonPage = require('@page-objects/default/common/common.wdio.page');
+
+describe('Old Navigation', () => {
+  const places = placeFactory.generateHierarchy();
+  const healthCenter = places.get(CONTACT_TYPES.HEALTH_CENTER);
+
+  const offlineUser = userFactory.build({ place: healthCenter._id });
+
+  const person = personFactory.build({ 
+    phone: '+50689999999', 
+    parent: { _id: healthCenter._id, parent: healthCenter.parent } 
+  });
+
+  const pregnancyReport = pregnancyFactory.build({
+    contact: offlineUser.contact,
+    fields: { patient_id: person._id }
+  });
+
+  const targetsConfig = [{ id: 'test_target', type: 'count', title: 'Test target', aggregate: true }];
+
+  before(async () => {
+    await utils.saveDocs([...places.values(), person, pregnancyReport]);
+    await utils.createUsers([offlineUser]);
+
+    const settings = await utils.getSettings();
+    const tasks = settings.tasks;
+    tasks.targets.items = targetsConfig;
+    const permissions = settings.permissions;
+    permissions.can_aggregate_targets = offlineUser.roles;
+    permissions.can_view_old_navigation = offlineUser.roles;
+    await utils.updateSettings({ tasks, permissions }, { ignoreReload: true });
+
+    await loginPage.login({ ...offlineUser, loadPage: false });
+    await oldNavigationPage.waitForPageLoaded();
+  });
+
+  after(async () => {
+    await utils.revertSettings(true);
+    await utils.deleteUsers([offlineUser]);
+  });
+
+  it('should navigate to the Messages section and open a sent message', async () => {
+    const message = 'Navigations test';
+    await oldNavigationPage.goToMessages();
+    await messagesPage.sendMessageDesktop(message, person.name, person.phone );
+    await messagesPage.openMessage(person._id);
+
+    const { name, phone } = await messagesPage.getMessageHeader();
+    expect(name).to.equal(person.name);
+    expect(phone).to.equal(person.phone);
+
+    const messages = await messagesPage.getAmountOfMessagesByPhone();
+    const { content, state } = await messagesPage.getMessageContent(messages);
+    expect(content).to.equal(message);
+    expect(state).to.equal('pending');
+  });
+
+  it('should navigate to the Task section and open the first task listed', async () => {
+    await oldNavigationPage.goToTasks();
+    await taskPage.openTaskById(
+      pregnancyReport._id,
+      '~pregnancy-danger-sign-follow-up~anc.pregnancy_danger_sign_followup'
+    );
+    expect(await genericForm.getFormTitle()).to.equal('Pregnancy danger sign follow-up');
+  });
+
+  it('should navigate to the Reports section and open the first report listed', async () => {
+    await oldNavigationPage.goToReports();
+    await reportsPage.openSelectedReport(await reportsPage.leftPanelSelectors.firstReport());
+    await oldNavigationPage.waitForPageLoaded();
+    const openReportInfo = await reportsPage.getOpenReportInfo();
+    expect(openReportInfo.patientName).to.equal(person.name);
+    expect(openReportInfo.reportName).to.equal('Pregnancy registration');
+  });
+
+  it('should navigate to the People section and open the created Health Center', async () => {
+    await oldNavigationPage.goToPeople();
+    await contactPage.selectLHSRowByText(healthCenter.name);
+    expect(await contactPage.getContactInfoName()).to.equal(healthCenter.name);
+  });
+
+  it('should navigate to the Targets section, and open a target aggregate', async () => {
+    await oldNavigationPage.goToAnalytics();
+    await targetAggregatesPage.goToTargetAggregates(true);
+    await targetAggregatesPage.openTargetDetails(targetsConfig[0]);
+  });
+
+  it('should successfully sync', async () => {
+    await oldNavigationPage.sync();
+  });
+
+  it('should display tab labels, when all tabs are enabled', async () => {
+    const tabsButtonLabelsNames = await commonPage.getAllButtonLabelsNames();
+    expect(tabsButtonLabelsNames).to.deep.equal(['Messages', 'Tasks', 'Reports', 'People', 'Targets']);
+    const tabsButtonIcons = await commonPage.getAllButtonFaIconClasses();
+    expect(tabsButtonIcons).to.deep.equal(['fa-envelope', 'fa-flag', 'fa-list-alt', 'fa-user', 'fa-bar-chart-o']);
+  });
+
+  it('should display tabs according to permissions and header_tabs configuration', async () => {
+    const permissionsToRemove = [
+      'can_view_analytics',
+      'can_view_analytics_tab',
+      'can_view_tasks',
+      'can_view_tasks_tab'
+    ];
+    await utils.updatePermissions(offlineUser.roles, [], permissionsToRemove, { ignoreReload: true });
+    await utils.updateSettings({ header_tabs: {
+      messages: {
+        weight: 44,
+        icon: 'fa-flag',
+      },
+      reports: {
+        weight: 43,
+        icon: 'fa-user',
+      },
+      contacts: {
+        weight: 1,
+        icon: 'fa-bar-chart-o'
+      },
+    } }, { ignoreReload: false });
+
+    const tabsButtonLabelsNames = await commonPage.getAllButtonLabelsNames();
+    expect(tabsButtonLabelsNames).to.deep.equal(['People', 'Reports', 'Messages']);
+    const tabsButtonIcons = await commonPage.getAllButtonFaIconClasses();
+    expect(tabsButtonIcons).to.deep.equal(['fa-bar-chart-o', 'fa-user', 'fa-flag']);
+  });
+});

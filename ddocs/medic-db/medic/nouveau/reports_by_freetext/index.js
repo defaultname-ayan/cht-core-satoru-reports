@@ -1,0 +1,56 @@
+function(doc) {
+  var skip = ['_id', '_rev', 'type', 'refid', 'content'];
+  var maxLength = 1000;
+  var minLength = 3;
+
+  var normalizeDevanagariNumerals = function(str) {
+    return str.replace(/[०-९]/g, function(d) {
+      return String.fromCodePoint(d.codePointAt(0) - 0x0966 + 0x0030);
+    });
+  };
+
+  var indexMaybe = function(type, fieldName, value, opts) {
+    var stringValue = String(value);
+    if (stringValue.length < minLength) { // Too short
+      return;
+    }
+
+    if (type === 'string' && stringValue.length > maxLength) {
+      return;
+    }
+    index(type, fieldName, value, opts);
+  };
+
+  var indexField = function(key, value) {
+    if (!key || !value) {
+      return;
+    }
+    var lowerKey = key.toLowerCase();
+    if (skip.indexOf(lowerKey) !== -1 || /_date$/.test(lowerKey)) {
+      return;
+    }
+
+    if (typeof value === 'string') {
+      var lowerValue = normalizeDevanagariNumerals(value.toLowerCase());
+      indexMaybe('text', 'default', lowerValue);
+      indexMaybe('string', 'exact_match', lowerKey + ':' + lowerValue);
+    } else if (typeof value === 'number') {
+      indexMaybe('string', 'exact_match', lowerKey + ':' + value);
+    }
+  };
+
+  if (doc.type !== 'data_record' || !doc.form) {
+    return;
+  }
+
+  Object.keys(doc).forEach(function(key) {
+    indexField(key, doc[key]);
+  });
+  if (doc.fields) {
+    Object.keys(doc.fields).forEach(function(key) {
+      indexField(key, doc.fields[key]);
+    });
+  }
+  var reportedDate = doc.reported_date && typeof doc.reported_date === 'number' ? doc.reported_date : 0;
+  index('double', 'reported_date', reportedDate, { store: true });
+}

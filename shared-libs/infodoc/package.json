@@ -1,0 +1,11 @@
+{
+  "name": "@medic/infodoc",
+  "version": "1.0.0",
+  "description": "Utilities to maintain sidecar CouchDB records",
+  "main": "src/infodoc.js",
+  "scripts": {
+    "test": "nyc --nycrcPath='../nyc.config.js' mocha ./test"
+  },
+  "author": "",
+  "license": "Apache-2.0"
+}

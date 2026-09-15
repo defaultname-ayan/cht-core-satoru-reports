@@ -1,0 +1,25 @@
+services:
+  cht-nginx:
+    build:
+      context: ../
+      target: cht-nginx
+    environment:
+      API_HOST: mock-api
+      API_PORT: 5988
+      CERTIFICATE_MODE: SELF_SIGNED
+    ports:
+      - 127.0.0.1:1080:80
+      - 127.0.0.1:1443:443
+    volumes:
+      - cht-ssl:/root/.acme.sh/
+    depends_on:
+      - mock-api
+
+  mock-api:
+    image: nginx:1-alpine-slim
+    volumes:
+      - ./mock-config/conf.d/:/etc/nginx/conf.d/:ro
+
+volumes:
+  cht-ssl:
+    name: cht-ssl

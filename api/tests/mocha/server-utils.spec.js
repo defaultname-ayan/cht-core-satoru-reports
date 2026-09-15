@@ -1,0 +1,302 @@
+const sinon = require('sinon');
+const chai = require('chai');
+const environment = require('@medic/environment');
+const { HTTP_HEADERS } = require('@medic/constants');
+const serverUtils = require('../../src/server-utils');
+const cookie = require('../../src/services/cookie');
+const { InvalidArgumentError, ResourceNotFoundError } = require('@medic/cht-datasource');
+
+let req;
+let res;
+let originalDb;
+
+describe('Server utils', () => {
+
+  beforeEach(() => {
+    req = {
+      url: '',
+      get: sinon.stub(),
+      accepts: sinon.stub(),
+    };
+    res = {
+      writeHead: sinon.stub(),
+      end: sinon.stub(),
+      json: sinon.stub(),
+      redirect: sinon.stub(),
+      status: sinon.stub(),
+      type: sinon.stub(),
+      setHeader: sinon.stub(),
+    };
+    originalDb = environment.db;
+    environment.db = 'medic';
+  });
+
+  afterEach(() => {
+    environment.db = originalDb;
+    sinon.restore();
+  });
+
+  describe('error', () => {
+
+    it('calls serverError when given string', () => {
+      const serverError = sinon.stub(serverUtils, 'serverError');
+      serverUtils.error('some string', req, res);
+      chai.expect(serverError.callCount).to.equal(1);
+      chai.expect(serverError.args[0][0]).to.equal('some string');
+    });
+
+    it('calls serverError when given 500 error', () => {
+      const serverError = sinon.stub(serverUtils, 'serverError');
+      serverUtils.error({ code: 500, message: 'some string' }, req, res);
+      chai.expect(serverError.callCount).to.equal(1);
+      chai.expect(serverError.args[0][0].message).to.equal('some string');
+    });
+
+    it('calls notLoggedIn when given 401 error', () => {
+      sinon.stub(serverUtils, 'notLoggedIn');
+      sinon.spy(serverUtils, 'serverError');
+      serverUtils.error({ code: 401 }, req, res);
+      chai.expect(serverUtils.notLoggedIn.callCount).to.equal(1);
+      chai.expect(serverUtils.notLoggedIn.args[0]).to.deep.equal([req, res, undefined]);
+      chai.expect(serverUtils.serverError.callCount).to.equal(0);
+      chai.expect(res.end.callCount).to.equal(0);
+    });
+
+    it('function handles InvalidArgument error as bad request(400) error', () => {
+      const err = new InvalidArgumentError('Bad Request');
+
+      serverUtils.error(err, req, res);
+
+      chai.expect(res.writeHead.callCount).to.eq(1);
+      chai.expect(res.writeHead.args[0][0]).to.eq(400);
+      chai.expect(res.writeHead.args[0][1]['Content-Type']).to.equal('text/plain');
+      chai.expect(res.end.callCount).to.equal(1);
+      chai.expect(res.end.args[0][0]).to.equal('Bad Request');
+    });
+
+    it('function handles ResourceNotFound error as 404 error', () => {
+      const err = new ResourceNotFoundError('Bad Request');
+
+      serverUtils.error(err, req, res);
+
+      chai.expect(res.writeHead.callCount).to.eq(1);
+      chai.expect(res.writeHead.args[0][0]).to.eq(404);
+      chai.expect(res.writeHead.args[0][1]['Content-Type']).to.equal('text/plain');
+      chai.expect(res.end.callCount).to.equal(1);
+      chai.expect(res.end.args[0][0]).to.equal('Bad Request');
+    });
+
+    it('function handles 503 errors - #3821', () => {
+      // an example error thrown by the `request` library
+      const error = {
+        code: 503,
+        message: {
+          message: 'connect ECONNREFUSED 127.0.0.1:5985',
+          stack:
+            'Error: connect ECONNREFUSED 127.0.0.1:5985\n    at Object.exports._errnoException ' +
+            '(util.js:1016:11)\n    at exports._exceptionWithHostPort (util.js:1039:20)\n    ' +
+            'at TCPConnectWrap.afterConnect [as oncomplete] (net.js:1138:14)',
+          code: 'ECONNREFUSED',
+          errno: 'ECONNREFUSED',
+          syscall: 'connect',
+          address: '127.0.0.1',
+          port: 5985
+        }
+      };
+      serverUtils.error(error, req, res);
+      chai.expect(res.writeHead.callCount).to.equal(1);
+      chai.expect(res.writeHead.args[0][0]).to.equal(500);
+      chai.expect(res.writeHead.args[0][1]['Content-Type']).to.equal('text/plain');
+      chai.expect(res.end.callCount).to.equal(1);
+      chai.expect(res.end.args[0][0]).to.equal('Server error');
+    });
+
+    it('handles unknown errors', () => {
+      serverUtils.error({ foo: 'bar' }, req, res);
+      chai.expect(res.writeHead.callCount).to.equal(1);
+      chai.expect(res.writeHead.args[0][0]).to.equal(500);
+      chai.expect(res.writeHead.args[0][1]['Content-Type']).to.equal('text/plain');
+      chai.expect(res.end.callCount).to.equal(1);
+      chai.expect(res.end.args[0][0]).to.equal('Server error');
+    });
+
+    it('500 for any non-numeric error code', () => {
+      serverUtils.error({ code: '100' }, req, res);
+      chai.expect(res.writeHead.callCount).to.eq(1);
+      chai.expect(res.writeHead.args[0][0]).to.eq(500);
+    });
+
+    it('500 for unparseable non-numeric error code', () => {
+      serverUtils.error({ code: 'foo' }, req, res);
+      chai.expect(res.writeHead.callCount).to.eq(1);
+      chai.expect(res.writeHead.args[0][0]).to.eq(500);
+    });
+
+    it('handles err.message being an object - #5809', () => {
+      const message = { bar: 'foo' };
+      serverUtils.error({ code: 400, message: message }, req, res);
+      chai.expect(res.writeHead.callCount).to.eq(1);
+      chai.expect(res.writeHead.args[0][0]).to.eq(400);
+      chai.expect(res.writeHead.args[0][1]['Content-Type']).to.equal('text/plain');
+      chai.expect(res.end.callCount).to.equal(1);
+      chai.expect(res.end.args[0][0]).to.equal(JSON.stringify(message));
+    });
+
+    it('handles err.message being an object with a "message" property - #5809', () => {
+      serverUtils.error({ code: 400, message: { message: 'foo' } }, req, res);
+      chai.expect(res.writeHead.callCount).to.eq(1);
+      chai.expect(res.writeHead.args[0][0]).to.eq(400);
+      chai.expect(res.writeHead.args[0][1]['Content-Type']).to.equal('text/plain');
+      chai.expect(res.end.callCount).to.equal(1);
+      chai.expect(res.end.args[0][0]).to.equal('foo');
+    });
+  });
+
+  describe('notLoggedIn', () => {
+
+    it('redirects to login page for human user', () => {
+      const setForceLoginStub = sinon.stub(cookie, 'setForceLogin');
+      req.url = 'someurl';
+      req.headers = { 'user-agent': 'Mozilla/1.0' };
+
+      serverUtils.notLoggedIn(req, res);
+
+      chai.expect(res.redirect.callCount).to.equal(1);
+      chai.expect(res.redirect.args[0][0]).to.equal(302);
+      chai.expect(res.redirect.args[0][1]).to.equal('/medic/login?redirect=someurl');
+      chai.expect(res.setHeader.callCount).to.equal(1);
+      chai.expect(res.setHeader.args[0]).to.deep.equal([HTTP_HEADERS.LOGOUT_AUTHORIZATION, 'CHT-Core API']);
+      chai.expect(setForceLoginStub.calledOnce);
+      chai.expect(setForceLoginStub.args[0]).to.deep.equal([res]);
+    });
+
+    it('returns 401 for medic-collect', () => {
+      req.url = 'someurl';
+      req.headers = { 'user-agent': null };
+      serverUtils.notLoggedIn(req, res);
+      chai.expect(res.writeHead.callCount).to.equal(1);
+      chai.expect(res.writeHead.args[0][0]).to.equal(401);
+
+      chai.expect(res.setHeader.callCount).to.equal(1);
+      chai.expect(res.setHeader.args[0]).to.deep.equal([HTTP_HEADERS.LOGOUT_AUTHORIZATION, 'CHT-Core API']);
+    });
+
+    it('shows prompt if requested', () => {
+      serverUtils.notLoggedIn(req, res, true);
+      chai.expect(res.writeHead.callCount).to.equal(1);
+      chai.expect(res.writeHead.args[0][0]).to.equal(401);
+      chai.expect(res.writeHead.args[0][1]['Content-Type']).to.equal('text/plain');
+      chai.expect(res.writeHead.args[0][1]['WWW-Authenticate']).to.equal('Basic realm="Medic Web Services"');
+      chai.expect(res.end.callCount).to.equal(1);
+      chai.expect(res.end.args[0][0]).to.equal('not logged in');
+
+      chai.expect(res.setHeader.callCount).to.equal(1);
+      chai.expect(res.setHeader.args[0]).to.deep.equal([HTTP_HEADERS.LOGOUT_AUTHORIZATION, 'CHT-Core API']);
+    });
+
+    it('responds with JSON if requested', () => {
+      req.accepts.returns('json');
+      serverUtils.notLoggedIn(req, res);
+      chai.expect(req.accepts.callCount).to.equal(1);
+      chai.expect(req.accepts.args[0][0]).to.deep.equal([ 'text', 'json' ]);
+      chai.expect(res.status.callCount).to.equal(1);
+      chai.expect(res.status.args[0][0]).to.equal(401);
+      chai.expect(res.type.callCount).to.equal(1);
+      chai.expect(res.type.args[0]).to.deep.equal(['json']);
+      chai.expect(res.end.callCount).to.equal(1);
+      chai.expect(res.end.args[0][0]).to.equal(JSON.stringify({ code: 401, error: 'unauthorized' }));
+
+      chai.expect(res.setHeader.callCount).to.equal(1);
+      chai.expect(res.setHeader.args[0]).to.deep.equal([HTTP_HEADERS.LOGOUT_AUTHORIZATION, 'CHT-Core API']);
+    });
+
+  });
+
+  describe('serverError', () => {
+
+    it('does not leak errors information to the client', () => {
+      serverUtils.serverError('boom', req, res);
+      chai.expect(res.writeHead.callCount, 1);
+      chai.expect(res.writeHead.args[0][0]).to.equal(500);
+      chai.expect(res.writeHead.args[0][1]['Content-Type']).to.equal('text/plain');
+      chai.expect(res.end.callCount).to.equal(1);
+      chai.expect(res.end.args[0][0]).to.equal('Server error');
+    });
+
+    it('shares public information with the client', () => {
+      serverUtils.serverError({ publicMessage: 'explanation' }, req, res);
+      chai.expect(res.writeHead.callCount).to.equal(1);
+      chai.expect(res.writeHead.args[0][0]).to.equal(500);
+      chai.expect(res.writeHead.args[0][1]['Content-Type']).to.equal('text/plain');
+      chai.expect(res.end.callCount).to.equal(1);
+      chai.expect(res.end.args[0][0]).to.equal('Server error: "explanation"');
+    });
+
+    it('responds with JSON', () => {
+      req.accepts.returns('json');
+      serverUtils.serverError({ foo: 'bar' }, req, res);
+      chai.expect(req.accepts.callCount).to.equal(1);
+      chai.expect(req.accepts.args[0][0]).to.deep.equal([ 'text', 'json' ]);
+      chai.expect(res.status.callCount).to.equal(1);
+      chai.expect(res.status.args[0][0]).to.equal(500);
+      chai.expect(res.end.callCount).to.equal(1);
+      chai.expect(res.end.args[0][0]).to.equal(JSON.stringify({ code: 500, error: 'Server error' }));
+    });
+
+    it('handles uncaught payload size exceptions', () => {
+      req.accepts.returns('json');
+      serverUtils.serverError({ foo: 'bar', type: 'entity.too.large' }, req, res);
+      chai.expect(req.accepts.callCount).to.equal(1);
+      chai.expect(req.accepts.args[0][0]).to.deep.equal([ 'text', 'json' ]);
+      chai.expect(res.status.callCount).to.equal(1);
+      chai.expect(res.status.args[0][0]).to.equal(413);
+      chai.expect(res.end.callCount).to.equal(1);
+      chai.expect(res.end.args[0][0]).to.equal(JSON.stringify({ code: 413, error: 'Payload Too Large' }));
+    });
+
+  });
+
+  describe('wantsJSON', () => {
+    it('should return true when accept header includes json', () => {
+      req.accepts.returns('json');
+      chai.expect(serverUtils.wantsJSON(req)).to.equal(true);
+    });
+
+    it('should return false when accept header excludes json', () => {
+      req.accepts.returns('text');
+      chai.expect(serverUtils.wantsJSON(req)).to.equal(false);
+    });
+  });
+
+  describe('doOrError', () => {
+    let serverUtilsError;
+
+    beforeEach(() => {
+      serverUtilsError = sinon.stub(serverUtils, 'error');
+    });
+
+    it('returns the function output when no error is thrown', async () => {
+      const fn = sinon.stub().resolves('result');
+
+      const result = await serverUtils.doOrError(fn)(req, res);
+
+      chai.expect(result).to.equal('result');
+      chai.expect(fn.calledOnceWithExactly(req, res)).to.be.true;
+      chai.expect(serverUtilsError.notCalled).to.be.true;
+    });
+
+    it('calls error when an error is thrown', async () => {
+      const error = new Error('error');
+      const fn = sinon.stub().rejects(error);
+
+      await serverUtils.doOrError(fn)(req, res);
+
+      chai.expect(fn.calledOnceWithExactly(req, res)).to.be.true;
+      chai.expect(serverUtilsError.calledOnceWithExactly(error, req, res)).to.be.true;
+    });
+  });
+
+  it('should export request header', () => {
+    chai.expect(serverUtils.REQUEST_ID_HEADER).to.equal(HTTP_HEADERS.REQUEST_ID);
+  });
+});

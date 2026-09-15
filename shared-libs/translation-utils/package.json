@@ -1,0 +1,11 @@
+{
+  "name": "@medic/translation-utils",
+  "version": "1.0.1",
+  "description": "Provides helper function to support nested keys in translations.",
+  "main": "src/translation-utils.js",
+  "scripts": {
+    "test": "nyc --nycrcPath='../nyc.config.js' mocha ./test"
+  },
+  "author": "",
+  "license": "Apache-2.0"
+}

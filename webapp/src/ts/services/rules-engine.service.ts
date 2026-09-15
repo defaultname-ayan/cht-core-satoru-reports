@@ -1,0 +1,779 @@
+import { Injectable, NgZone, OnDestroy } from '@angular/core';
+import * as RegistrationUtils from '@medic/registration-utils';
+import * as RulesEngineCore from '@medic/rules-engine';
+import { Subject, Subscription } from 'rxjs';
+import { debounce as _debounce, uniq as _uniq } from 'lodash-es';
+import * as moment from 'moment';
+import { toBik } from 'bikram-sambat';
+import { DOC_IDS, DOC_TYPES } from '@medic/constants';
+
+import { AuthService } from '@mm-services/auth.service';
+import { SessionService } from '@mm-services/session.service';
+import { SettingsService } from '@mm-services/settings.service';
+import { TelemetryService } from '@mm-services/telemetry.service';
+import { UHCSettingsService } from '@mm-services/uhc-settings.service';
+import { UserContactService } from '@mm-services/user-contact.service';
+import { UserSettingsService } from '@mm-services/user-settings.service';
+import { ParseProvider } from '@mm-providers/parse.provider';
+import { ChangesService } from '@mm-services/changes.service';
+import { ContactTypesService } from '@mm-services/contact-types.service';
+import { TranslateFromService } from '@mm-services/translate-from.service';
+import { DbService } from '@mm-services/db.service';
+import { CalendarIntervalService } from '@mm-services/calendar-interval.service';
+import { CHTDatasourceService } from '@mm-services/cht-datasource.service';
+import { TranslateService } from '@mm-services/translate.service';
+import { PerformanceService } from '@mm-services/performance.service';
+import { Store } from '@ngrx/store';
+import { TasksActions } from '@mm-actions/tasks';
+import { ReportingPeriod } from '@mm-modules/analytics/analytics-sidebar-filter.component';
+import { Qualifier, Target } from '@medic/cht-datasource';
+
+interface DebounceActive {
+  [key: string]: {
+    active?: boolean;
+    debounceRef?: any;
+    performance?: any;
+    params?: any;
+    promise?: Promise<any>;
+    resolve?: any;
+  };
+}
+
+interface TaskDoc {
+  _id: string;
+  emission?: any;
+  owner: string;
+  stateHistory: Array<{ state: string, timestamp: number }>;
+}
+
+interface RulesSettings {
+  rules?: string;
+  taskSchedules?: any[];
+  targets?: any[];
+  enableTasks?: boolean;
+  enableTargets?: boolean;
+  contact?: any;
+  user?: any;
+  rulesAreDeclarative?: boolean;
+  monthStartDate?: number;
+  useBikramSambatMonths?: boolean;
+  chtScriptApi?: any;
+}
+
+@Injectable({
+  providedIn: 'root'
+})
+export class RulesEngineCoreFactoryService {
+  constructor(
+    private dbService: DbService
+  ) {}
+
+  get() {
+    return RulesEngineCore(this.dbService.get());
+  }
+}
+
+@Injectable({
+  providedIn: 'root'
+})
+export class RulesEngineService implements OnDestroy {
+  private rulesEngineCore;
+  private readonly MAX_LINEAGE_DEPTH = 50;
+  private readonly ENSURE_FRESHNESS_MILLIS = 1000;
+  private readonly DEBOUNCE_CHANGE_MILLIS = 1000;
+  private readonly CHANGE_WATCHER_KEY = 'mark-contacts-dirty';
+  private readonly FRESHNESS_KEY = 'freshness';
+  private readonly INTERVAL_TAG_FORMAT = 'YYYY-MM';
+  private subscriptions: Subscription = new Subscription();
+  private initialized;
+  private uhcMonthStartDate;
+  private useBikramSambatMonths;
+  private debounceActive: DebounceActive = {};
+  private observable = new Subject();
+  private readonly taskActions: TasksActions;
+  private readonly getTarget: ReturnType<typeof Target.v1.get>;
+
+  constructor(
+    private translateService:TranslateService,
+    private authService:AuthService,
+    private sessionService:SessionService,
+    private settingsService:SettingsService,
+    private telemetryService:TelemetryService,
+    private performanceService:PerformanceService,
+    private uhcSettingsService:UHCSettingsService,
+    private userContactService:UserContactService,
+    private userSettingsService:UserSettingsService,
+    private parseProvider:ParseProvider,
+    private changesService:ChangesService,
+    private contactTypesService:ContactTypesService,
+    private translateFromService:TranslateFromService,
+    private rulesEngineCoreFactoryService:RulesEngineCoreFactoryService,
+    private calendarIntervalService:CalendarIntervalService,
+    private ngZone:NgZone,
+    private chtDatasourceService:CHTDatasourceService,
+    private store: Store
+  ) {
+    this.initialized = this.initialize();
+    this.rulesEngineCore = this.rulesEngineCoreFactoryService.get();
+    this.taskActions = new TasksActions(this.store);
+    this.getTarget = chtDatasourceService.bind(Target.v1.get);
+  }
+
+  ngOnDestroy(): void {
+    this.subscriptions.unsubscribe();
+  }
+
+  private initialize() {
+    return this.ngZone.runOutsideAngular(() => this._initialize());
+  }
+
+  private async _initialize() {
+    const canViewTasks = await this.authService.has('can_view_tasks');
+    const canViewTargets = await this.authService.has('can_view_analytics');
+
+    const hasPermissions = canViewTargets || canViewTasks;
+    if (!hasPermissions || this.sessionService.isOnlineOnly()) {
+      return false;
+    }
+
+    const [settingsDoc, userContactDoc, userSettingsDoc, chtScriptApi] =
+      await Promise.all([
+        this.settingsService.get(),
+        this.userContactService.get(),
+        this.userSettingsService.get(),
+        this.chtDatasourceService.get()
+      ]);
+
+    const rulesEngineContext = this.getRulesEngineContext(
+      settingsDoc,
+      userContactDoc,
+      userSettingsDoc,
+      canViewTasks,
+      canViewTargets,
+      chtScriptApi
+    );
+
+    const rulesSettings = this.getRulesSettings(rulesEngineContext);
+    const trackPerformance = this.performanceService.track();
+    const trackName = { name: this.getTelemetryTrackName('initialize') };
+
+    await this.rulesEngineCore.initialize(rulesSettings);
+    const isEnabled = this.rulesEngineCore.isEnabled();
+
+    if (!isEnabled) {
+      trackPerformance?.stop(trackName);
+      return false;
+    }
+
+    this.assignMonthStartDate(settingsDoc);
+    this.monitorChanges(rulesEngineContext);
+
+    const rulesDebounceRef = _debounce(() => {
+      this.debounceActive[this.FRESHNESS_KEY].active = false;
+      this.fetchOverdueTasksForAllContacts();
+    }, this.ENSURE_FRESHNESS_MILLIS);
+
+    this.debounceActive[this.FRESHNESS_KEY] = {
+      active: true,
+      performance: {
+        name: this.getTelemetryTrackName( 'background-refresh', 'cancel'),
+        track: this.performanceService.track()
+      },
+      debounceRef: rulesDebounceRef
+    };
+    this.debounceActive[this.FRESHNESS_KEY].debounceRef();
+
+    trackPerformance?.stop(trackName);
+
+    return true;
+  }
+
+  private async fetchOverdueTasksForAllContacts() {
+    const allTasks = await this.fetchTaskDocsForAllContacts();
+    this.ngZone.run(() => {
+      this.taskActions.setTasksList(allTasks.map(task => task.emission));
+    });
+    this.monitorTaskChanges();
+  }
+
+  private cancelDebounce(entity) {
+    const debounceInfo = this.debounceActive[entity];
+
+    if (!debounceInfo?.debounceRef || !debounceInfo?.active) {
+      return;
+    }
+
+    if (debounceInfo.active) { // Debounced function is not executed or cancelled yet.
+      debounceInfo.performance.track.stop({ name: debounceInfo.performance.name });
+    }
+
+    debounceInfo.debounceRef.cancel();
+    debounceInfo.active = false;
+  }
+
+  private waitForDebounce(entity):Promise<any> | undefined {
+    if (this.debounceActive[entity]?.active && this.debounceActive[entity]?.promise) {
+      return this.debounceActive[entity].promise;
+    }
+
+    return Promise.resolve();
+  }
+
+  private getRulesEngineContext(settingsDoc, userContactDoc, userSettingsDoc, enableTasks, enableTargets, chtScriptApi){
+    return {
+      settingsDoc,
+      userContactDoc,
+      userSettingsDoc,
+      enableTasks,
+      enableTargets,
+      chtScriptApi
+    };
+  }
+
+  private getRulesSettings(rulesEngineContext) {
+    const settingsTasks = rulesEngineContext?.settingsDoc?.tasks || {};
+    const filterTargetByContext = (target) => target.context ?
+      !!this.parseProvider.parse(target.context)({ user: rulesEngineContext.userContactDoc }) : true;
+    const targets = settingsTasks?.targets?.items || [];
+
+    const settings: RulesSettings = {
+      rules: settingsTasks.rules,
+      taskSchedules: settingsTasks.schedules,
+      targets: targets.filter(filterTargetByContext),
+      enableTasks: rulesEngineContext.enableTasks,
+      enableTargets: rulesEngineContext.enableTargets,
+      contact: rulesEngineContext.userContactDoc,
+      user: rulesEngineContext.userSettingsDoc,
+      rulesAreDeclarative: !!rulesEngineContext.settingsDoc?.tasks?.isDeclarative,
+      monthStartDate: this.uhcSettingsService.getMonthStartDate(rulesEngineContext.settingsDoc),
+      useBikramSambatMonths: this.uhcSettingsService.getUseBikramSambatMonths(rulesEngineContext.settingsDoc),
+      chtScriptApi: rulesEngineContext.chtScriptApi
+    };
+
+    if (this.uhcSettingsService.getUseBikramSambatMonths(rulesEngineContext.settingsDoc)) {
+      settings.useBikramSambatMonths = true;
+    }
+
+    return settings;
+  }
+
+  private isReport(doc) {
+    return doc.type === DOC_TYPES.DATA_RECORD && !!doc.form;
+  }
+
+  private dirtyContactCallback(change) {
+    const subjectIds = [this.isReport(change.doc) ? RegistrationUtils.getSubjectId(change.doc) : change.id];
+    this.observable.next(subjectIds);
+
+    if (this.debounceActive[this.CHANGE_WATCHER_KEY]?.active) {
+      const oldSubjectIds = this.debounceActive[this.CHANGE_WATCHER_KEY].params;
+      if (oldSubjectIds) {
+        subjectIds.push(...oldSubjectIds);
+      }
+
+      this.debounceActive[this.CHANGE_WATCHER_KEY].params = subjectIds;
+      this.debounceActive[this.CHANGE_WATCHER_KEY].debounceRef();
+      return;
+    }
+
+    const trackPerformance = this.performanceService.track();
+    let resolve;
+    const promise = new Promise(r => resolve = r);
+
+    const debounceRef = _debounce(async () => {
+      this.debounceActive[this.CHANGE_WATCHER_KEY].active = false;
+      this.debounceActive[this.CHANGE_WATCHER_KEY].resolve();
+
+      const contactIds = this.debounceActive[this.CHANGE_WATCHER_KEY].params;
+      this.telemetryService.record(this.getTelemetryTrackName('refresh', 'dirty-contacts'), contactIds.length);
+
+      await this.rulesEngineCore.updateEmissionsFor(contactIds);
+      trackPerformance?.stop({ name: this.getTelemetryTrackName('refresh') });
+    }, this.DEBOUNCE_CHANGE_MILLIS);
+
+    this.debounceActive[this.CHANGE_WATCHER_KEY] = {
+      active: true,
+      promise: promise,
+      resolve: resolve,
+      performance: {
+        name: this.getTelemetryTrackName('refresh', 'cancel'),
+        track: this.performanceService.track()
+      },
+      debounceRef: debounceRef,
+      params: subjectIds,
+    };
+    this.debounceActive[this.CHANGE_WATCHER_KEY].debounceRef();
+  }
+
+  private monitorContactChanges() {
+    const dirtyContactsSubscription = this.changesService.subscribe({
+      key: this.CHANGE_WATCHER_KEY,
+      filter: change => !!change.doc && (this.contactTypesService.includes(change.doc) || this.isReport(change.doc)),
+      callback: change => this.dirtyContactCallback(change)
+    });
+    this.subscriptions.add(dirtyContactsSubscription);
+  }
+
+  private monitorConfigChanges(rulesEngineContext) {
+    const userLineage: any[] = [];
+    for (
+      let current = rulesEngineContext.userContactDoc;
+      !!current && userLineage.length < this.MAX_LINEAGE_DEPTH;
+      current = current.parent
+    ) {
+      userLineage.push(current._id);
+    }
+
+    const rulesUpdateSubscription = this.changesService.subscribe({
+      key: 'rules-config-update',
+      filter: change => change.id === DOC_IDS.SETTINGS || userLineage.includes(change.id),
+      callback: change => {
+        if (change.id !== DOC_IDS.SETTINGS) {
+          return this.userContactService
+            .get()
+            .then(updatedUser => {
+              rulesEngineContext.userContactDoc = updatedUser;
+              this.rulesConfigChange(rulesEngineContext);
+            });
+        }
+
+        rulesEngineContext.settingsDoc = change.doc.settings;
+        this.rulesConfigChange(rulesEngineContext);
+      },
+    });
+    this.subscriptions.add(rulesUpdateSubscription);
+  }
+
+  private monitorTaskChanges() {
+    const taskDocSubscription = this.changesService.subscribe({
+      key: 'task-doc-update',
+      filter: change => change.doc.type === 'task' && this.rulesEngineCore.showTask(change.doc),
+      callback: change => {
+        this.ngZone.run(() => {
+          this.taskActions.setOverdueTasks(this.hydrateTaskDocs([change.doc]));
+        });
+      }
+    });
+    this.subscriptions.add(taskDocSubscription);
+  }
+
+  private monitorChanges(rulesEngineContext) {
+    this.monitorContactChanges();
+    this.monitorConfigChanges(rulesEngineContext);
+  }
+
+  private rulesConfigChange(rulesEngineContext) {
+    const rulesSettings = this.getRulesSettings(rulesEngineContext);
+    this.rulesEngineCore.rulesConfigChange(rulesSettings);
+    this.assignMonthStartDate(rulesEngineContext.settingsDoc);
+  }
+
+  private translateProperty(property, task) {
+    if (typeof property === 'string') {
+      // new translation key style
+      return this.translateService.instant(property, task);
+    }
+    // old message array style
+    return this.translateFromService.get(property, task);
+  }
+
+  private updateEmissionExternalChanges(changedDocs) {
+    const contactsWithUpdatedTasks = changedDocs
+      .filter(doc => doc.type === 'task')
+      .map(doc => doc.requester);
+
+    if (!contactsWithUpdatedTasks.length) {
+      return;
+    }
+
+    return this.rulesEngineCore.updateEmissionsFor(_uniq(contactsWithUpdatedTasks));
+  }
+
+  private hydrateTaskDocs(taskDocs: Array<TaskDoc> = []) {
+    taskDocs.forEach(taskDoc => {
+      const { emission } = taskDoc;
+      if (!emission) {
+        return;
+      }
+
+      const dueDate = moment(emission.dueDate, 'YYYY-MM-DD');
+      emission.overdue = dueDate.isBefore(moment());
+      emission.date = new Date(dueDate.valueOf());
+      // Preserve the unresolved title key for non-PII analytics
+      emission.titleKey = typeof emission.title === 'string' ? emission.title : undefined;
+      emission.title = this.translateProperty(emission.title, emission);
+      emission.priorityLabel = this.translateProperty(emission.priorityLabel, emission);
+      emission.owner = taskDoc.owner;
+    });
+
+    return taskDocs;
+  }
+
+  private assignMonthStartDate(settingsDoc) {
+    this.uhcMonthStartDate = this.uhcSettingsService.getMonthStartDate(settingsDoc);
+    this.useBikramSambatMonths = this.uhcSettingsService.getUseBikramSambatMonths(settingsDoc);
+  }
+
+  isEnabled() {
+    return this.initialized;
+  }
+
+  private refreshEmissions() {
+    return this.ngZone.runOutsideAngular(() => this._refreshEmissions());
+  }
+
+  private async _refreshEmissions() {
+    const trackName = this.getTelemetryTrackName('background-refresh');
+    let trackPerformanceQueueing;
+    let trackPerformanceRunning;
+
+    await this.initialized;
+    this.telemetryService.record(
+      this.getTelemetryTrackName('background-refresh', 'dirty-contacts'),
+      this.rulesEngineCore.getDirtyContacts().length
+    );
+    this.cancelDebounce(this.FRESHNESS_KEY);
+
+    await this.rulesEngineCore
+      .refreshEmissionsFor()
+      .on('queued', () => trackPerformanceQueueing = this.performanceService.track())
+      .on('running', () => {
+        trackPerformanceRunning = this.performanceService.track();
+        trackPerformanceQueueing?.stop({ name: `${trackName}:queued` });
+      });
+
+    if (!trackPerformanceRunning) {
+      trackPerformanceRunning = this.performanceService.track();
+    }
+    trackPerformanceRunning.stop({ name: trackName });
+  }
+
+  fetchTaskDocsForAllContacts() {
+    return this.ngZone.runOutsideAngular(() => this._fetchTaskDocsForAllContacts());
+  }
+
+  private async _fetchTaskDocsForAllContacts() {
+    const trackName = this.getTelemetryTrackName('tasks', 'all-contacts');
+    let trackPerformanceQueueing;
+    let trackPerformanceRunning;
+
+    await this.initialized;
+    this.telemetryService.record(
+      this.getTelemetryTrackName('tasks', 'dirty-contacts'),
+      this.rulesEngineCore.getDirtyContacts().length
+    );
+    this.cancelDebounce(this.FRESHNESS_KEY);
+    await this.waitForDebounce(this.CHANGE_WATCHER_KEY);
+    const taskDocs = await this.rulesEngineCore
+      .fetchTasksFor()
+      .on('queued', () => trackPerformanceQueueing = this.performanceService.track())
+      .on('running', () => {
+        trackPerformanceRunning = this.performanceService.track();
+        trackPerformanceQueueing?.stop({ name: `${trackName}:queued` });
+      });
+
+    if (!trackPerformanceRunning) {
+      trackPerformanceRunning = this.performanceService.track();
+    }
+    trackPerformanceRunning.stop({ name: trackName });
+    return this.hydrateTaskDocs(taskDocs);
+  }
+
+  fetchTaskDocsFor(contactIds) {
+    return this.ngZone.runOutsideAngular(() => this._fetchTaskDocsFor(contactIds));
+  }
+
+  private async _fetchTaskDocsFor(contactIds) {
+    const trackName = this.getTelemetryTrackName('tasks', 'some-contacts');
+    let trackPerformanceQueueing;
+    let trackPerformanceRunning;
+
+    await this.initialized;
+    this.telemetryService.record(
+      this.getTelemetryTrackName('tasks', 'dirty-contacts'),
+      this.rulesEngineCore.getDirtyContacts().length
+    );
+    await this.waitForDebounce(this.CHANGE_WATCHER_KEY);
+    const taskDocs = await this.rulesEngineCore
+      .fetchTasksFor(contactIds)
+      .on('queued', () => trackPerformanceQueueing = this.performanceService.track())
+      .on('running', () => {
+        trackPerformanceRunning = this.performanceService.track();
+        trackPerformanceQueueing?.stop({ name: `${trackName}:queued` });
+      });
+
+    if (!trackPerformanceRunning) {
+      trackPerformanceRunning = this.performanceService.track();
+    }
+    trackPerformanceRunning?.stop({ name: trackName });
+    return this.hydrateTaskDocs(taskDocs);
+  }
+
+  fetchTasksBreakdown(contactIds?) {
+    return this.ngZone.runOutsideAngular(() => this._fetchTasksBreakdown(contactIds));
+  }
+
+  private _fetchTasksBreakdown(contactIds?) {
+    const trackName = this.getTelemetryTrackName('tasks-breakdown', contactIds ? 'some-contacts' : 'all-contacts');
+    const trackPerformance = this.performanceService.track();
+    return this.initialized
+      .then(() => this.rulesEngineCore.fetchTasksBreakdown(contactIds))
+      .then(taskBreakdown => {
+        trackPerformance?.stop({ name: trackName });
+        return taskBreakdown;
+      });
+  }
+
+  fetchTargets(reportingPeriod: ReportingPeriod = ReportingPeriod.CURRENT): Promise<TargetViewModel[]> {
+    return this.ngZone.runOutsideAngular(() => this._fetchTargets(reportingPeriod));
+  }
+
+  private async _fetchTargets(reportingPeriod: ReportingPeriod): Promise<TargetViewModel[]> {
+    // If current month, use existing logic
+    if (reportingPeriod === ReportingPeriod.CURRENT) {
+      return this._fetchCurrentTargets();
+    }
+
+    // Previous month: use target interval from cht-datasource
+    try {
+      const settings = await this.settingsService.get();
+      const targetDocs = await this.fetchTargetDocumentsForPeriod(settings, reportingPeriod);
+
+      // If no target interval found (null), return empty array
+      if (!targetDocs) {
+        return [];
+      }
+
+      return this.processTargetDocuments(targetDocs, settings, reportingPeriod);
+    } catch (error) {
+      console.error('Error fetching previous month targets:', error);
+      return [];
+    }
+  }
+
+  private async _fetchCurrentTargets(): Promise<TargetViewModel[]> {
+    const trackName = this.getTelemetryTrackName('targets');
+    let trackPerformanceQueueing;
+    let trackPerformanceRunning;
+
+    await this.initialized;
+    this.telemetryService.record(
+      'rules-engine:targets:dirty-contacts',
+      this.rulesEngineCore.getDirtyContacts().length
+    );
+    this.cancelDebounce(this.FRESHNESS_KEY);
+    await this.waitForDebounce(this.CHANGE_WATCHER_KEY);
+
+    const relevantInterval = this.calendarIntervalService.getCurrent(
+      this.uhcMonthStartDate,
+      this.useBikramSambatMonths
+    );
+    const targets = await this.rulesEngineCore
+      .fetchTargets(relevantInterval)
+      .on('queued', () => trackPerformanceQueueing = this.performanceService.track())
+      .on('running', () => {
+        trackPerformanceRunning = this.performanceService.track();
+        trackPerformanceQueueing?.stop({ name: `${trackName}:queued` });
+      });
+
+    if (!trackPerformanceRunning) {
+      trackPerformanceRunning = this.performanceService.track();
+    }
+    trackPerformanceRunning?.stop({ name: trackName });
+    return targets;
+  }
+
+  /**
+   * Targets reporting intervals cover a calendaristic month, starting on a configurable day (uhcMonthStartDate)
+   * Each target doc will use the end date of its reporting interval, in YYYY-MM format, as part of its _id
+   * @param settings - The application settings containing uhcMonthStartDate
+   * @param reportingPeriod - ReportingPeriod enum value (CURRENT or PREVIOUS)
+   * @param monthsAgo - Number of reporting periods ago (default: 1)
+   * @returns A string representing the interval tag in YYYY-MM format
+   */
+  getTargetIntervalTag(
+    settings: Record<string, unknown>,
+    reportingPeriod: ReportingPeriod,
+    monthsAgo = 1
+  ): string {
+    const uhcMonthStartDate = this.uhcSettingsService.getMonthStartDate(settings);
+    const useBikramSambatMonths = this.uhcSettingsService.getUseBikramSambatMonths(settings);
+    const currentInterval = this.calendarIntervalService.getCurrent(uhcMonthStartDate, useBikramSambatMonths);
+
+    if (reportingPeriod === ReportingPeriod.CURRENT) {
+      if (useBikramSambatMonths) {
+        const bsEnd = toBik(moment(currentInterval.end).format('YYYY-MM-DD'));
+        return `${bsEnd.year}-${String(bsEnd.month).padStart(2, '0')}`;
+      }
+      return moment(currentInterval.end)
+        .locale('en')
+        .format(this.INTERVAL_TAG_FORMAT);
+    }
+
+    let interval = currentInterval;
+    for (let i = 0; i < monthsAgo; i++) {
+      const previousDate = moment(interval.start).subtract(1, 'day');
+      interval = this.calendarIntervalService.getInterval(
+        uhcMonthStartDate,
+        previousDate.valueOf(),
+        useBikramSambatMonths
+      );
+    }
+
+    if (useBikramSambatMonths) {
+      const bsEnd = toBik(moment(interval.end).format('YYYY-MM-DD'));
+      return `${bsEnd.year}-${String(bsEnd.month).padStart(2, '0')}`;
+    }
+    return moment(interval.end)
+      .locale('en')
+      .format(this.INTERVAL_TAG_FORMAT);
+  }
+
+  getBSMonthName(monthNumber: number): string {
+    const isNepali = this.translateService.currentLang === 'ne';
+    const nepaliMonths = [
+      'बैशाख', 'जेठ', 'असार', 'साउन', 'भदौ', 'असोज', 'कार्तिक', 'मंसिर', 'पौष', 'माघ', 'फाल्गुन', 'चैत'
+    ];
+    const englishMonths = [
+      'Baisakh', 'Jestha', 'Ashadh', 'Shrawan', 'Bhadra', 'Ashwin',
+      'Kartik', 'Mangsir', 'Poush', 'Magh', 'Falgun', 'Chaitra'
+    ];
+    const index = monthNumber - 1;
+    if (index >= 0 && index < 12) {
+      return isNepali ? nepaliMonths[index] : englishMonths[index];
+    }
+    return '';
+  }
+
+  getReportingMonth(settings: Record<string, unknown>, reportingPeriod:ReportingPeriod) {
+    try {
+      const tag = this.getTargetIntervalTag(settings, reportingPeriod);
+      const useBikramSambatMonths = this.uhcSettingsService.getUseBikramSambatMonths(settings);
+      if (useBikramSambatMonths) {
+        const parts = tag.split('-');
+        const monthNum = Number.parseInt(parts[1], 10);
+        return this.getBSMonthName(monthNum);
+      }
+      return moment(tag, this.INTERVAL_TAG_FORMAT).format('MMMM');
+    } catch (error) {
+      console.error('Error getting reporting month:', error);
+      return this.translateService.instant('targets.last_month.subtitle');
+    }
+  }
+
+  /**
+   * Fetch target interval for a specific reporting period using cht-datasource
+   * @returns the target interval, or null if not found or prerequisites aren't met
+   */
+  private async fetchTargetDocumentsForPeriod(
+    settings: any,
+    reportingPeriod: ReportingPeriod
+  ): Promise<Target.v1.Target | null> {
+    const intervalTag = this.getTargetIntervalTag(settings, reportingPeriod);
+    const userContact = await this.userContactService.get();
+    const username = this.sessionService.userCtx()?.name;
+
+    if (!userContact?._id || !username) {
+      return null;
+    }
+
+    return await this.getTarget(
+      Qualifier.and(
+        Qualifier.byReportingPeriod(intervalTag),
+        Qualifier.byContactId(userContact._id),
+        Qualifier.byUsername(username)
+      )
+    );
+  }
+
+  /**
+   * Process target interval into target format expected by UI
+   * Only returns targets that exist in the target interval document.
+   */
+  private processTargetDocuments(
+    targetDoc: Target.v1.Target,
+    settings: any,
+    reportingPeriod: ReportingPeriod
+  ): TargetViewModel[] {
+    const targetsConfig = settings?.tasks?.targets?.items || [];
+    const processedTargets: TargetViewModel[] = [];
+
+    if (!targetDoc?.targets) {
+      return processedTargets;
+    }
+
+    targetDoc.targets.forEach(targetValue => {
+      const targetConfig = targetsConfig.find(config => config.id === targetValue.id);
+      if (targetConfig && targetConfig.visible !== false) {
+        processedTargets.push({
+          ...targetConfig,
+          reportingMonth: this.getReportingMonth(settings, reportingPeriod),
+          ...targetValue,
+          visible: true
+        });
+      }
+    });
+
+    return processedTargets;
+  }
+
+  async monitorExternalChanges(replicationResult?) {
+    await this.initialized;
+    return replicationResult?.docs && this.updateEmissionExternalChanges(replicationResult.docs);
+  }
+
+  contactsMarkedAsDirty(callback) {
+    return this.observable.subscribe(callback);
+  }
+
+  private getTelemetryTrackName(...params:string[]) {
+    return ['rules-engine', ...params].join(':');
+  }
+}
+
+export enum TargetType {
+  COUNT = 'count',
+  PERCENT = 'percent'
+}
+
+export interface TargetValue {
+  pass: number;
+  percent?: number;
+  total: number;
+}
+
+export interface TargetViewModel {
+  id: string;
+  type: TargetType;
+  icon: string;
+  translation_key: string;
+  subtitle_translation_key: string;
+  goal: number;
+  value: TargetValue;
+}
+
+export interface Task {
+  _id: string;
+  authoredOn: number;
+  stateHistory: {
+    state: string;
+    timestamp: number;
+  }[],
+  state: string,
+  user: string;
+  requester: string;
+  owner: string;
+  emission: TaskEmission;
+}
+
+export interface TaskEmission {
+  _id: string;
+  title: string;
+  resolved: boolean;
+  actions: any[];
+  dueDate: string;
+  priority: string;
+  priorityLabel: string;
+  overdue: boolean;
+  [string: string]: any;
+}

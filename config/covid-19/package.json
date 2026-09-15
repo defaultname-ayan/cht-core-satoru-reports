@@ -1,0 +1,13 @@
+{
+  "name": "cht-config-covid19",
+  "version": "0.1.0",
+  "description": "CHT configuration for COVID-19 response",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "eslint": "eslint **.json **.js",
+    "test": "TZ=Africa/Nairobi mocha --reporter progress test/**/*.spec.js --timeout 25000",
+    "ci": "./test/check-app-settings-is-committed && npm run eslint && npm run test"
+  }
+}

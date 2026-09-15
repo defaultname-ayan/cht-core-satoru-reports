@@ -1,0 +1,14 @@
+{
+  "name": "@medic/message-utils",
+  "version": "1.0.2",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "nyc --nycrcPath='../nyc.config.js' mocha ./test"
+  },
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@medic/logger": "file:../logger",
+    "@medic/phone-number": "file:../phone-number"
+  }
+}

@@ -1,0 +1,75 @@
+const _ = require('lodash/core');
+const constants = require('@medic/constants');
+const PREFIXES = constants.PREFIXES;
+
+angular.module('controllers').controller('UsersCtrl',
+  function (
+    $log,
+    $scope,
+    DB,
+    Modal,
+    Settings
+  ) {
+
+    'use strict';
+    'ngInject';
+
+    Settings()
+      .then(function(settings) {
+        $scope.roles = settings.roles;
+      })
+      .catch(function(err) {
+        $log.error('Error fetching settings', err);
+      });
+
+    $scope.updateList = function() {
+      $scope.loading = true;
+      const params = {
+        include_docs: true,
+        start_key: PREFIXES.COUCH_USER,
+        end_key: PREFIXES.COUCH_USER + '\ufff0',
+      };
+      DB().allDocs(params)
+        .then(function(settings) {
+          $scope.users = _.map(settings.rows, 'doc');
+          $scope.loading = false;
+        })
+        .catch(function(err) {
+          $scope.error = true;
+          $scope.loading = false;
+          $log.error('Error fetching users', err);
+        });
+    };
+
+    $scope.deleteUserPrepare = function(user, $event) {
+      $event.stopPropagation();
+      Modal({
+        templateUrl: 'templates/delete_user_confirm.html',
+        controller: 'DeleteUserCtrl',
+        model: user
+      });
+    };
+
+    $scope.editUser = function(user) {
+      Modal({
+        templateUrl: 'templates/edit_user.html',
+        controller: 'EditUserCtrl',
+        model: user
+      });
+    };
+
+    $scope.showAddMultipleUsersModal = function() {
+      Modal({
+        templateUrl: 'templates/multiple_user_modal.html',
+        controller: 'MultipleUserCtrl',
+        model: {},
+      });
+    };
+
+    $scope.$on('UsersUpdated', function() {
+      $scope.updateList();
+    });
+
+    $scope.updateList();
+
+  });
