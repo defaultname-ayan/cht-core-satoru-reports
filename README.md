@@ -1,3 +1,10 @@
+> **This is a patched copy of CHT Core, not the upstream project.**
+> Based on `medic/cht-core` at tag 5.3.0, plus a patch for Satoru EMR
+> assessment reports (readable DDST/DST/MoCA/VSMS reports + Print/Save as
+> PDF). See **[SATORU.md](SATORU.md)** for what changed, how to build it,
+> and the companion config repo you also need.
+> Upstream: https://github.com/medic/cht-core
+
 # The Core Framework of the Community Health Toolkit (CHT)
 
 ![GitHub license](https://img.shields.io/github/license/medic/cht-core)
