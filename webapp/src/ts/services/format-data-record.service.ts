@@ -484,6 +484,150 @@ export class FormatDataRecordService {
     return undefined;
   }
 
+  /*
+   * Satoru scale-report enhancement.
+   *
+   * Forms listed in settings.report_display get a human-readable rendering:
+   *   - configured internal/calculation fields are removed from display
+   *   - choice values (yes/P/F/pass/...) are resolved to the labels defined
+   *     in the form definition (map shipped in the config, generated from
+   *     the form XML)
+   *   - note fields (disclaimer) get their label text as the value
+   *   - chronological-age helper fields are joined into one readable row
+   *   - per-item scores are attached to their question row
+   *   - empty leaf fields are suppressed (presentation only - nothing is
+   *     removed from the CouchDB doc)
+   *
+   * Forms NOT in the config keep the stock rendering exactly.
+   */
+  private getReportDisplayConfig(settings, form) {
+    const cfg = settings?.report_display?.[form];
+    return cfg && typeof cfg === 'object' ? cfg : null;
+  }
+
+  private scaleFieldPath(label: string, prefix: string): string | null {
+    return label.indexOf(prefix) === 0 ? label.slice(prefix.length) : null;
+  }
+
+  private lookupField(values: any, path: string) {
+    if (!values) {
+      return undefined;
+    }
+    return path.split('.').reduce((acc, part) => {
+      return acc && acc[part] !== undefined ? acc[part] : undefined;
+    }, values);
+  }
+
+  private formatScaleDate(value: any) {
+    try {
+      const formatted = this.formatDateService.date(value);
+      return formatted || value;
+    } catch (e) {
+      return value;
+    }
+  }
+
+  private formatScaleAgeParts(days: any) {
+    const d = Number(days);
+    if (!Number.isFinite(d) || d < 0) {
+      return null;
+    }
+    const years = Math.floor(d / 365.25);
+    const months = Math.floor((d - years * 365.25) / 30.4375);
+    const yearLabel = years === 1 ? 'year' : 'years';
+    const monthLabel = months === 1 ? 'month' : 'months';
+    if (years <= 0 && months <= 0) {
+      return `${d} days`;
+    }
+    if (years <= 0) {
+      return `${months} ${monthLabel}`;
+    }
+    return `${years} ${yearLabel} ${months} ${monthLabel}`;
+  }
+
+  private getScaleDisplayFields(doc, settings, cfg) {
+    let fields = this.getDisplayFields(doc);
+    const prefix = 'report.' + doc.form + '.';
+    const hidden: string[] = cfg.hide_fields || [];
+    const keepEmpty: string[] = cfg.keep_empty || [];
+    const joins = cfg.join_fields || [];
+    const scoreFields = cfg.score_fields || {};
+    const noteValues = cfg.note_values || {};
+    const choiceMap = cfg.choice_map || {};
+    const dateFields: string[] = cfg.date_fields || [];
+
+    // remove configured internal fields (full path or whole subtree)
+    if (hidden.length) {
+      fields = fields.filter((field) => {
+        const path = this.scaleFieldPath(field.label, prefix);
+        if (path === null) {
+          return true;
+        }
+        return !hidden.some((h) => path === h || path.indexOf(h + '.') === 0);
+      });
+    }
+
+    const out: any[] = [];
+    fields.forEach((field) => {
+      const path = this.scaleFieldPath(field.label, prefix);
+
+      if (path !== null && 'value' in field) {
+        // resolve choice value -> human label from the form definition
+        const map = choiceMap[path];
+        if (map && typeof field.value === 'string' && map[field.value]) {
+          field.value = map[field.value];
+        } else if (dateFields.includes(path) && field.value) {
+          field.value = this.formatScaleDate(field.value);
+        }
+
+        // note fields: stored value is empty; show the form's note text
+        if (noteValues[path] !== undefined) {
+          field.value = noteValues[path];
+        }
+
+        // join chronological-age helper fields into one readable row
+        const join = joins.find((j) => j.target === path);
+        if (join) {
+          if (join.label) {
+            field.label = join.label; // human label, not the calc-field key
+          }
+          if (join.format === 'years_months_parts') {
+            const years = this.lookupField(doc.fields, join.parts[0]);
+            const months = this.lookupField(doc.fields, join.parts[1]);
+            if (years !== undefined && months !== undefined) {
+              field.value = `${years} ${Number(years) === 1 ? 'year' : 'years'} ` +
+                `${months} ${Number(months) === 1 ? 'month' : 'months'}`;
+            }
+          } else if (join.format === 'days_to_years_months') {
+            const days = this.lookupField(doc.fields, join.parts[0]);
+            const composed = this.formatScaleAgeParts(days);
+            if (composed) {
+              field.value = composed;
+            }
+          }
+        }
+
+        // attach per-item score to its question row
+        const scorePath = scoreFields[path];
+        if (scorePath) {
+          const score = this.lookupField(doc.fields, scorePath);
+          if (score !== undefined && score !== '') {
+            field.score = score;
+          }
+        }
+
+        // suppress empty presentation rows
+        if (cfg.suppress_empty
+          && (field.value === '' || field.value === undefined || field.value === null)
+          && keepEmpty.indexOf(path) === -1) {
+          return;
+        }
+      }
+      out.push(field);
+    });
+    return out;
+  }
+
   private getFields(doc, results, values, labelPrefix, depth) {
     if (depth > 3) {
       depth = 3;
@@ -526,8 +670,9 @@ export class FormatDataRecordService {
     return fields.filter(field => !isHidden(field.label));
   }
 
-  private formatXmlFields(doc) {
-    doc.fields = this.getDisplayFields(doc);
+  private formatXmlFields(doc, settings?) {
+    const cfg = settings && this.getReportDisplayConfig(settings, doc.form);
+    doc.fields = cfg ? this.getScaleDisplayFields(doc, settings, cfg) : this.getDisplayFields(doc);
   }
 
   private formatJsonFields(doc, settings, language) {
@@ -682,7 +827,7 @@ export class FormatDataRecordService {
     const formatted = _.clone(doc);
 
     if (formatted.content_type === 'xml') {
-      this.formatXmlFields(formatted);
+      this.formatXmlFields(formatted, settings);
     } else {
       this.formatJsonFields(formatted, settings, language);
     }

@@ -17,6 +17,7 @@ import { FastAction, FastActionButtonService } from '@mm-services/fast-action-bu
 import { SendMessageComponent } from '@mm-modals/send-message/send-message.component';
 import { DbService } from '@mm-services/db.service';
 import { SearchTelemetryService } from '@mm-services/search-telemetry.service';
+import { PrintReportService } from '@mm-services/print-report.service';
 import { NgIf, NgFor, AsyncPipe } from '@angular/common';
 import { FastActionButtonComponent } from '@mm-components/fast-action-button/fast-action-button.component';
 import { SenderComponent } from '@mm-components/sender/sender.component';
@@ -74,6 +75,7 @@ export class ReportsContentComponent implements OnInit, OnDestroy {
     private readonly responsiveService:ResponsiveService,
     private readonly modalService:ModalService,
     private readonly searchTelemetryService: SearchTelemetryService,
+    private readonly printReportService: PrintReportService,
   ) {
     this.globalActions = new GlobalActions(store);
     this.reportsActions = new ReportsActions(store);
@@ -97,6 +99,17 @@ export class ReportsContentComponent implements OnInit, OnDestroy {
   ngOnDestroy() {
     this.subscription.unsubscribe();
     this.reportsActions.setSelectedReport();
+  }
+
+  printReport(selection: any) {
+    const doc = selection?.formatted;
+    if (!doc) {
+      return;
+    }
+    // same resolution as the TitlePipe used in the template
+    const form = _.find(this.forms, { code: doc.form });
+    const title = form?.title || doc.form || '';
+    this.printReportService.printSelection(selection, title);
   }
 
   private hasSelectedNewReport(selectedReport, nextSelectedReport): boolean {

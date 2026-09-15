@@ -59,6 +59,10 @@
       </div>
 
       <div class="details" *ngIf="selection.expanded">
+        <button type="button" class="btn btn-secondary report-print-btn"
+          (click)="printReport(selection)" test-id="report-print">
+          <i class="fa fa-print"></i> {{'Print / Save as PDF' | translate}}
+        </button>
         <ul>
           <ng-container *ngIf="selection.formatted?.form">
             <li
