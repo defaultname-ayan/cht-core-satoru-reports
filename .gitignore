@@ -63,3 +63,6 @@ user-password-change.csv
 .envrc
 release-notes.md
 /scripts/build/helm/values.yaml
+
+# local CHT docker-helper env files (contain COUCHDB_PASSWORD/SECRET)
+/*.env
